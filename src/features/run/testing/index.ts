@@ -153,11 +153,16 @@ export function withTestReporting<T extends Pick<RunConfig, "kind" | "command" |
 }
 
 /** Test runners the IDE loads its own reporter into, or whose report it reads (`crates/ide-run/src/test_runner/reporter.rs`). */
-const IDE_REPORTERS = new Set(["vitest", "jest", "node-test", "bun-test"]);
+const IDE_REPORTERS = new Set(["vitest", "jest", "node-test", "bun-test", "bun-test-live"]);
 
 /** The run reports its tests as TeamCity service messages through the IDE's reporter. */
-export function hasIdeReporter(config: Pick<RunConfig, "testRunner">): boolean {
-  return !!config.testRunner && IDE_REPORTERS.has(config.testRunner);
+export function hasIdeReporter(config: Pick<RunConfig, "testRunner" | "kind">): boolean {
+  return (!!config.testRunner && IDE_REPORTERS.has(config.testRunner)) || reportsOnStderr(config);
+}
+
+/** pytest's plugin (`openidea_pytest.py`) reports on stderr: pytest's own verbose lines are on stdout. */
+export function reportsOnStderr(config: Pick<RunConfig, "kind">): boolean {
+  return config.kind === "pytest";
 }
 
 export function createTestParser(
@@ -171,7 +176,7 @@ export function createTestParser(
     case "js":
       return hasIdeReporter(config) ? teamcityTreeParser(jsParser()) : jsParser();
     case "pytest":
-      return pytestParser();
+      return hasIdeReporter(config) ? teamcityTreeParser(pytestParser()) : pytestParser();
     case "unittest":
       return unittestParser();
     case "phpunit":

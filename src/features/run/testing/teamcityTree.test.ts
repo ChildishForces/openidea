@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createTestParser, parseAll, TestResults } from "./index";
 import { jsParser } from "./js";
 import { teamcityTreeParser } from "./teamcityTree";
@@ -75,6 +75,97 @@ describe("teamcityTreeParser", () => {
     expect([failed.own, failed.durationMs, failed.location?.line]).toEqual(["failed", 1, 16]);
     expect(r.get(at("src/math.test.ts", "add", "later"))!.own).toBe("skipped");
     expect(r.get(at("src/math.test.ts"))!.output).toEqual(["hi"]);
+  });
+
+  it("reads the bun test reporter's tree: failures with their values, hook failures, filtered tests left out", async () => {
+    const written: string[] = [];
+    vi.doMock("node:fs", () => ({ writeSync: (_fd: number, text: string) => written.push(text) }));
+    // @ts-expect-error -- the reporter is plain JavaScript that bun test loads, with no declarations.
+    const { default: BunReporter } = await import("../../../../crates/ide-run/src/test_runner/reporters/bun.mjs");
+    vi.doUnmock("node:fs");
+    const B = `${process.cwd()}/src/math.test.ts`;
+    const node = (type: string, id: string, parentId: string | null, name: string, line: number) => ({
+      type,
+      id,
+      parentId,
+      name,
+      line,
+      column: 3,
+    });
+    const end = (id: string, name: string, status: string, extra = {}) => ({
+      type: "testEnd",
+      file: B,
+      id,
+      name,
+      status,
+      duration: 1.4,
+      errors: [],
+      ...extra,
+    });
+    // As `bun test src/math.test.ts --reporter=<bun.mjs> -t add` reports them.
+    const reporter = new BunReporter();
+    reporter.onFileStart({ type: "fileStart", file: B });
+    reporter.onFileCollected({
+      type: "fileCollected",
+      file: B,
+      tests: [
+        node("describe", "d2", null, "add", 15),
+        node("test", "t1", "d2", "adds positive numbers", 16),
+        node("test", "t2", "d2", "later", 17),
+        node("describe", "d3", null, "subtract", 21),
+        node("test", "t3", "d3", "subtracts", 22),
+      ],
+    });
+    reporter.onTestStart({ type: "testStart", file: B, id: "t1", attempt: 1 });
+    reporter.onTestEnd(
+      end("t1", "adds positive numbers", "fail", {
+        errors: [
+          {
+            name: "AssertionError",
+            message: "expect(received).toBe(expected)\n\nExpected: 6\nReceived: 5\n",
+            stack: "AssertionError: expect(received).toBe(expected)\n      at src/math.test.ts:16:20\n",
+            expected: "6",
+            actual: "5",
+            uncaught: false,
+          },
+        ],
+      }),
+    );
+    reporter.onTestEnd(end("t2", "later", "todo"));
+    reporter.onTestEnd(end("t3", "subtracts", "skip", { reason: "filtered" }));
+    reporter.onHookFailure({
+      type: "hookFailure",
+      file: B,
+      parentId: "d2",
+      status: "fail",
+      errors: [{ name: "Error", message: "no database", stack: "Error: no database", uncaught: false }],
+    });
+    reporter.onFileEnd({ type: "fileEnd", file: B, duration: 3, failedToLoad: false });
+
+    const r = new TestResults();
+    const parser = createTestParser({
+      kind: "bun",
+      command: "bun",
+      args: ["run", "test"],
+      testRunner: "bun-test-live",
+    });
+    r.apply(parseAll(parser, ["bun test v1.4.6", ...written.map((line) => line.replace(/\n$/, ""))].join("\n")));
+    const failed = r.get(at("src/math.test.ts", "add", "adds positive numbers"))!;
+    expect([failed.own, failed.durationMs, failed.location]).toEqual([
+      "failed",
+      1,
+      { path: B, line: 16, col: 3, resolve: "path" },
+    ]);
+    expect(failed.output).toEqual([
+      "expect(received).toBe(expected)",
+      "Expected: 6",
+      "Received: 5",
+      "AssertionError: expect(received).toBe(expected)",
+      "      at src/math.test.ts:16:20",
+    ]);
+    expect(r.get(at("src/math.test.ts", "add", "later"))!.own).toBe("skipped");
+    expect(r.get(at("src/math.test.ts", "add"))!.output).toEqual(["no database", "Error: no database"]);
+    expect(r.get(at("src/math.test.ts", "subtract"))).toBeUndefined();
   });
 
   it("reads the console output when the reporter didn't load", () => {

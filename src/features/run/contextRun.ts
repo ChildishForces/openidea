@@ -378,7 +378,8 @@ function peekContent(path: string): string | undefined {
 /** Whether the file's runnability depends on its text (`package main`, `fn main`, `#!`…). */
 function needsContent(path: string): boolean {
   const name = path.slice(path.lastIndexOf("/") + 1);
-  return /\.(go|rs|java|kt|c|cpp|cc|cxx|zig)$/.test(name) || !name.includes(".");
+  // C# and Swift: a file's tests (its run's filter) come from its text.
+  return /\.(go|rs|java|kt|c|cpp|cc|cxx|zig|cs|swift)$/.test(name) || !name.includes(".");
 }
 
 export async function prepareMenu(_menu: ContextMenuId, ctx: MenuGroupContext): Promise<void> {

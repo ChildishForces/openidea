@@ -58,6 +58,10 @@ RSpec 有自己的配置类型（**RSpec 测试**）和检测到的 `rspec` 配�
 
 JavaScript 或 TypeScript 测试配置还会指定其 **测试运行器**：Jest、Vitest、Mocha、Node.js test runner、Bun test 或 Deno test。OpenIDEA 根据脚本运行的命令（包括它调用的其他脚本）检测运行器，否则根据包依赖的测试框架及其配置文件判断。可以在配置表单中修改运行器，或设置该配置覆盖的 **测试文件**。
 
+测试运行时，测试树会在每个测试开始时显示它，然后显示结果：Vitest、Jest、Node.js test runner、pytest 和 `cargo test` 会实时报告（对于 `cargo test`，OpenIDEA 会设置 `RUSTC_BOOTSTRAP=1`，让测试程序输出事件；这不会改变构建）。使用 **Bun test** 运行器时，结果在运行结束时显示。
+
+使用 **Bun test** 时，测试树在运行结束后根据 `bun test` 写出的 JUnit 报告生成。**Bun test (live results)** 会在每个测试运行时实时显示，并带有测试位置；`toBe()` 或 `toEqual()` 失败时还会显示期望值和实际值。它通过 `bun test --reporter=<module>` 加载 IDE 的报告器，因此需要支持报告器模块的 `bun test` 版本，旧版本会拒绝启动。自动检测总是选择 **Bun test**。
+
 ## 重新运行
 
 | 操作                               | macOS | Windows / Linux |

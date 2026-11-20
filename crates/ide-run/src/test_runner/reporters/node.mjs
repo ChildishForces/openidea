@@ -2,9 +2,14 @@
 // the IDE as TeamCity service messages. The IDE builds its test tree from them and hides them from the
 // console; the `spec` reporter still prints the run as usual.
 //
-// Node reports tests in the order they are defined: a suite's `test:start` comes before its tests', its
-// `test:pass` / `test:fail` after them, so each file keeps a stack of the open suites. Whether a node is a
-// suite is only known when it finishes; it is reported once it has a test or when it finishes.
+// Live: `test:enqueue` (a test queued, with its type) puts it in the tree; `test:dequeue` (it starts running)
+// tells which suite the tests queued next belong to; its `test:pass` / `test:fail`, matched by file, line,
+// column and name, gives the result. Node reports `test:start` only once a test has finished.
+//
+// Without those events (older Node), tests are reported as they finish: Node reports them in the order they
+// are defined, a suite's `test:start` before its tests', its `test:pass` / `test:fail` after them, so each
+// file keeps a stack of the open suites. Whether a node is a suite is only known when it finishes; it is
+// reported once it has a test or when it finishes.
 
 import path from "node:path";
 
@@ -36,7 +41,7 @@ export default async function* openIdeaReporter(source) {
   const fileOf = (file, out) => {
     let entry = files.get(file);
     if (!entry) {
-      entry = { id: String(++ids), stack: [], name: path.relative(process.cwd(), file) };
+      entry = { id: String(++ids), stack: [], live: new Map(), running: [], name: path.relative(process.cwd(), file) };
       files.set(file, entry);
       out.push(
         message("testSuiteStarted", {
@@ -51,6 +56,38 @@ export default async function* openIdeaReporter(source) {
   };
 
   const location = (data) => `file://${data.file}${data.line ? `:${data.line}:${data.column ?? 1}` : ""}`;
+  /** A test's identity across its events. */
+  const key = (data) => `${data.line}:${data.column}:${data.name}`;
+
+  /** The result of a test or suite reported live (`node.id`). */
+  const result = (event, data, id, out) => {
+    const details = data.details ?? {};
+    const error = details.error;
+    const cause = error?.cause ?? error;
+    if (details.type === "suite") {
+      // A suite whose tests failed fails through them; report only failures of its own (hooks).
+      if (event.type === "test:fail" && error?.failureType !== "subtestsFailed") {
+        out.push(message("testFailed", { nodeId: id, message: cause?.message, details: cause?.stack }));
+      }
+      out.push(message("testSuiteFinished", { nodeId: id }));
+      return;
+    }
+    if (event.type === "test:fail") {
+      const compared = cause && "expected" in cause && "actual" in cause;
+      out.push(
+        message("testFailed", {
+          nodeId: id,
+          message: cause?.message?.split("\n")[0],
+          details: cause?.stack ?? cause?.message,
+          expected: compared ? show(cause.expected) : undefined,
+          actual: compared ? show(cause.actual) : undefined,
+        }),
+      );
+    } else if (data.skip || data.todo) {
+      out.push(message("testIgnored", { nodeId: id, message: typeof data.skip === "string" ? data.skip : undefined }));
+    }
+    out.push(message("testFinished", { nodeId: id, duration: Math.round(details.duration_ms ?? 0) }));
+  };
 
   /** Reports `node` as a suite (and the suites around it), once. */
   const openSuite = (entry, at, out) => {
@@ -77,6 +114,30 @@ export default async function* openIdeaReporter(source) {
     data.file = path.resolve(data.file);
     const entry = fileOf(data.file, out);
     switch (event.type) {
+      case "test:enqueue": {
+        if (data.nesting === 0 && data.name === entry.name) break;
+        const parent = data.nesting > 0 ? entry.running[data.nesting - 1] : null;
+        // Not placeable (its suite wasn't seen running): its result reports it.
+        if (entry.live.has(key(data)) || (data.nesting > 0 && !parent)) break;
+        const node = { id: String(++ids) };
+        entry.live.set(key(data), node);
+        out.push(
+          message(data.type === "suite" ? "testSuiteStarted" : "testStarted", {
+            name: data.name,
+            nodeId: node.id,
+            parentNodeId: parent ? parent.id : entry.id,
+            locationHint: location(data),
+          }),
+        );
+        break;
+      }
+      case "test:dequeue": {
+        const node = entry.live.get(key(data));
+        if (!node) break;
+        entry.running[data.nesting] = node;
+        entry.running.length = data.nesting + 1;
+        break;
+      }
       case "test:start": {
         // A file that fails to load is reported as a test named after the file.
         if (data.nesting === 0 && data.name === entry.name) break;
@@ -91,6 +152,12 @@ export default async function* openIdeaReporter(source) {
       }
       case "test:pass":
       case "test:fail": {
+        const live = entry.live.get(key(data));
+        if (live) {
+          result(event, data, live.id, out);
+          entry.stack.length = data.nesting;
+          break;
+        }
         const details = data.details ?? {};
         const error = details.error;
         const node = entry.stack[data.nesting];

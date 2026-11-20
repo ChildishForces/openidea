@@ -63,6 +63,10 @@ Detected test configurations show results in the tree automatically. For your ow
 
 A JavaScript or TypeScript test configuration also names its **Test runner**: Jest, Vitest, Mocha, Node.js test runner, Bun test or Deno test. OpenIDEA detects it from the command the script runs, following the scripts it calls, or else from the package's test framework dependency and its config file. Change it, or set the **Test files** the configuration covers, in the configuration's form.
 
+While tests run, the tree shows each one as it starts, then its result: Vitest, Jest, the Node.js test runner, pytest and `cargo test` report live (for `cargo test`, OpenIDEA sets `RUSTC_BOOTSTRAP=1` so the test binaries print their events; it doesn't change the build). With the **Bun test** runner, results arrive when the run ends.
+
+With **Bun test**, the test tree fills in when the run ends, from the JUnit report `bun test` writes. **Bun test (live results)** shows each test as it runs, with its location and, for a failed `toBe()` or `toEqual()`, the expected and received values. It loads the IDE's reporter with `bun test --reporter=<module>`, so it needs a version of `bun test` that supports reporter modules; an older one refuses to start. Detection always picks **Bun test**.
+
 ## Rerun tests
 
 | Action                             | macOS | Windows / Linux |

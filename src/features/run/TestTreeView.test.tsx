@@ -252,6 +252,30 @@ describe("Expand All / Collapse All", () => {
     expect(screen.getByText("ApiTest").closest('[role="treeitem"]')).toHaveAttribute("aria-level", "2");
   });
 
+  it("opens every suite while the tests run, and only the files and failures once the run ends", () => {
+    localStorage.setItem("openidea.run.testFilters", JSON.stringify({ showPassed: true }));
+    const running = (on: boolean) => (
+      <TestTreeView results={nested()} version={1} cwd="/p" selected={null} onSelect={() => {}} running={on} />
+    );
+    const { rerender } = render(running(true));
+    expect(rows()).toEqual([
+      "ApiTest",
+      "Auth",
+      "Tokens",
+      "refreshes()",
+      "Users",
+      "lists()",
+      "DbTest",
+      "Pool",
+      "reuses()",
+    ]);
+    rerender(running(false));
+    expect(rows()).toEqual(["ApiTest", "Auth", "Tokens", "refreshes()", "Users", "DbTest", "Pool"]);
+    // The next run opens everything again.
+    rerender(running(true));
+    expect(rows()).toContain("reuses()");
+  });
+
   it("opens every suite, including those of hidden passed tests, and folds back to the top-level suites", () => {
     localStorage.setItem("openidea.run.testFilters", JSON.stringify({ showPassed: true }));
     render(view(nested()));

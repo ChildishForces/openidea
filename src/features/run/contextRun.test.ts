@@ -3,7 +3,7 @@ import type { RunConfig } from "@/platform/ipc";
 import { useProject } from "@/platform/project";
 import { menuGroupItems, registerMenuGroup } from "@/workbench/contributions";
 import type { MenuItem } from "@/ui";
-import { canDebugProduced, choiceItems, compiledDebugPlan, contextMenuItems } from "./contextRun";
+import { canDebugProduced, choiceItems, compiledDebugPlan, contextMenuItems, prepareMenu } from "./contextRun";
 import { OPTIMISTIC, produceContextChoices, type ToolEnv } from "./producers";
 import { gutterTestState, markerIcon, targetMenuItems } from "./runGutter";
 import { useRun } from "./store";
@@ -363,5 +363,41 @@ describe("Run with Fuzzing", () => {
     expect(
       labels(contextMenuItems("projectView", { paths: [path], dirs: [false] })).some((l) => /Fuzzing/.test(l)),
     ).toBe(false);
+  });
+});
+
+describe("run context menu of a file the editor hasn't opened", () => {
+  const dotnetTest: RunConfig = {
+    ...npmTest,
+    id: "dotnet:Tests/Tests.csproj:test",
+    name: "Tests",
+    kind: "dotnet-test",
+    command: "dotnet",
+    args: ["test", "Tests/Tests.csproj"],
+    params: { project: "Tests/Tests.csproj" },
+    debugAdapter: null,
+  };
+  beforeEach(() => {
+    useProject.setState({ project: { name: "app", root: ROOT, trusted: true, isGit: false, settings: {} } as never });
+    useRun.setState({ configs: [dotnetTest], loaded: true });
+    mocks.tauri.value = true;
+    setInvokeRoute((cmd) =>
+      cmd === "fs_read_text" ? Promise.resolve(mocks.read.value) : Promise.reject(new Error("not stubbed")),
+    );
+  });
+  afterEach(() => {
+    mocks.tauri.value = false;
+    mocks.read.value = null;
+    setInvokeRoute(null);
+    useProject.setState({ project: null });
+    useRun.setState({ configs: [], loaded: false });
+  });
+
+  it("reads a C# test file to run its tests from the Project view", async () => {
+    mocks.read.value = "public class AddTests\n{\n    [Fact]\n    public void Adds() { }\n}\n";
+    const ctx = { paths: [`${ROOT}/Tests/AddTests.cs`], dirs: [false] };
+    await prepareMenu("projectView", ctx);
+    const run = contextMenuItems("projectView", ctx)[0];
+    expect(run).toMatchObject({ label: "Run 'AddTests.cs'" });
   });
 });

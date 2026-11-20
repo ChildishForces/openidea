@@ -167,6 +167,12 @@ export function TestTreeView({
   const sortButton = useRef<HTMLButtonElement>(null);
   const [sortMenu, setSortMenu] = useState(false);
   const [expanded, setExpanded] = useState<Set<string> | null>(null);
+  // A run starting or ending opens the tree as it suits that moment again (the user's toggles were for the last one).
+  const [lastRunning, setLastRunning] = useState(running);
+  if (running !== lastRunning) {
+    setLastRunning(running);
+    setExpanded(null);
+  }
   const [exporting, setExporting] = useState(false);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const tree = useRef<TreeHandle>(null);
@@ -266,9 +272,11 @@ export function TestTreeView({
     [roots, running, results.summary.durationMs],
   );
 
-  // Expand failed suites by default (IDEA reveals failures); the user's toggles win afterwards.
+  // While the tests run every suite is open, so each test shows as it reports; once the run ends, the files and
+  // the failed suites stay open (IDEA reveals failures). The user's toggles win in between.
   const effectiveExpanded = useMemo(() => {
     if (expanded) return expanded;
+    if (running) return suiteIds(roots, new Set([ROOT_ID]));
     const set = new Set<string>([ROOT_ID]);
     const visit = (nodes: readonly TestNode[], depth: number) => {
       for (const n of nodes) {
@@ -279,7 +287,7 @@ export function TestTreeView({
     };
     visit(roots, 0);
     return set;
-  }, [expanded, roots]);
+  }, [expanded, roots, running]);
 
   // Export Test Results waits for the run to finish.
   const canExport = !running && !results.isEmpty;

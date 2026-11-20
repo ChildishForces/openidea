@@ -49,6 +49,8 @@ pub fn builtin() -> Vec<TestRunnerInfo> {
             &["**/*{.,-,_}test.{ext}", "**/test-*.{ext}", "**/test/**/*.{ext}"],
         ),
         runner("bun-test", "Bun test", JS_KINDS, &["**/*{.,_}{test,spec}.{ext}"]),
+        // Needs a `bun test` with reporter modules (`--reporter=<module>`); "Bun test" reads its JUnit report.
+        runner("bun-test-live", "Bun test (live results)", JS_KINDS, &["**/*{.,_}{test,spec}.{ext}"]),
         runner("deno-test", "Deno test", &["deno"], &["**/{*_,*.,}test.{ext}"]),
     ]
 }

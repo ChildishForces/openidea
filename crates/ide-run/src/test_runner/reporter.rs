@@ -6,10 +6,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const FILES: [(&str, &str); 3] = [
+const FILES: [(&str, &str); 5] = [
     ("vitest.mjs", include_str!("reporters/vitest.mjs")),
     ("jest.cjs", include_str!("reporters/jest.cjs")),
     ("node.mjs", include_str!("reporters/node.mjs")),
+    ("bun.mjs", include_str!("reporters/bun.mjs")),
+    ("openidea_pytest.py", include_str!("reporters/openidea_pytest.py")),
 ];
 
 /// How a framework loads the IDE's reporter next to its own.
@@ -41,6 +43,10 @@ const NODE_TEST: Reporter = Reporter {
     },
 };
 
+// bun test's reporter modules run next to its console reporter. `--dots` and other `--reporter`s are the user's choice.
+const BUN_TEST: Reporter =
+    Reporter { file: "bun.mjs", option: "--reporter", args: |path| vec![format!("--reporter={path}")] };
+
 /// The reporter a run of `config` loads: test runs of a framework that has one, through a
 /// `package.json` script, with their output in the console (a terminal would show the messages).
 fn reporter_for(config: &RunConfig) -> Option<&'static Reporter> {
@@ -51,14 +57,19 @@ fn reporter_for(config: &RunConfig) -> Option<&'static Reporter> {
         "vitest" => &VITEST,
         "jest" => &JEST,
         "node-test" => &NODE_TEST,
+        "bun-test-live" => &BUN_TEST,
         _ => return None,
     };
-    let chosen = config.args.iter().any(|a| a == reporter.option || a.starts_with(&format!("{}=", reporter.option)));
+    let chosen = config.args.iter().any(|a| {
+        a == reporter.option
+            || a.starts_with(&format!("{}=", reporter.option))
+            || (reporter.file == BUN_TEST.file && a == "--dots")
+    });
     (!chosen).then_some(reporter)
 }
 
-/// A JUnit report the framework writes when the run ends (`bun test` has no reporter API): the run turns
-/// it into the IDE's test messages then.
+/// A JUnit report the framework writes when the run ends (the "bun-test" runner, for versions of `bun test`
+/// without its reporter module API): the run turns it into the IDE's test messages then.
 #[derive(Clone, Debug)]
 pub struct EndReport {
     path: PathBuf,
@@ -110,6 +121,10 @@ fn install(dir: &Path) -> io::Result<()> {
 /// framework's own reporter keeps printing the console output. `bun test` writes a JUnit report instead
 /// (in `dir`), returned to be read when the run, in `run_dir`, ends.
 pub fn add(config: &mut RunConfig, dir: &Path, run_dir: &Path) -> io::Result<Option<EndReport>> {
+    cargo_events(config);
+    if pytest_plugin(config, dir)? {
+        return Ok(None);
+    }
     if let Some(report) = bun_report(config, dir, run_dir)? {
         return Ok(Some(report));
     }
@@ -119,6 +134,53 @@ pub fn add(config: &mut RunConfig, dir: &Path, run_dir: &Path) -> io::Result<Opt
     let args = (reporter.args)(&dir.join(reporter.file).display().to_string());
     config.args.splice(at..at, args);
     Ok(None)
+}
+
+/// pytest runs load the IDE's plugin (`-p openidea_pytest`, found through `PYTHONPATH`), which reports its
+/// tests live on stderr. Returns whether the run takes it.
+fn pytest_plugin(config: &mut RunConfig, dir: &Path) -> io::Result<bool> {
+    if !config.is_test || config.extras.emulate_terminal || config.kind != "pytest" {
+        return Ok(false);
+    }
+    install(dir)?;
+    // After the `pytest` of `uv run pytest` / `python -m pytest`; first when the command is pytest itself.
+    let at = config.args.iter().position(|a| a == "pytest").map_or(0, |i| i + 1);
+    config.args.splice(at..at, ["-p".to_owned(), "openidea_pytest".to_owned()]);
+    let inherited = if config.extras.include_system_env { crate::system_env().remove("PYTHONPATH") } else { None };
+    let existing = config.env.get("PYTHONPATH").cloned().or(inherited);
+    let paths = std::iter::once(dir.to_path_buf()).chain(existing.iter().flat_map(std::env::split_paths));
+    let joined = std::env::join_paths(paths).map_err(io::Error::other)?;
+    config.env.insert("PYTHONPATH".into(), joined.to_string_lossy().into_owned());
+    Ok(true)
+}
+
+/// `cargo test` runs report each test as it starts and ends, through libtest's JSON events. The format is
+/// unstable: `RUSTC_BOOTSTRAP=1` lets the test binaries use it (it doesn't change what Cargo builds). A run
+/// choosing its own output (`--format`, `--quiet`, `-Z …`) keeps it.
+fn cargo_events(config: &mut RunConfig) {
+    if !config.is_test
+        || config.extras.emulate_terminal
+        || config.kind != "cargo"
+        || config.args.first().map(String::as_str) != Some("test")
+    {
+        return;
+    }
+    let separator = config.args.iter().position(|a| a == "--");
+    let harness = separator.map_or(&[][..], |at| &config.args[at + 1..]);
+    let chosen = |a: &String| {
+        a == "--format"
+            || a.starts_with("--format=")
+            || a.starts_with("-Z")
+            || matches!(a.as_str(), "-q" | "--quiet" | "--list")
+    };
+    if harness.iter().any(chosen) {
+        return;
+    }
+    if separator.is_none() {
+        config.args.push("--".into());
+    }
+    config.args.extend(["-Z", "unstable-options", "--format", "json", "--report-time"].map(String::from));
+    config.env.entry("RUSTC_BOOTSTRAP".into()).or_insert_with(|| "1".into());
 }
 
 fn bun_report(config: &mut RunConfig, dir: &Path, run_dir: &Path) -> io::Result<Option<EndReport>> {
@@ -260,6 +322,68 @@ mod tests {
         assert!(messages.contains("name='adds'") && !messages.contains("subtract"), "{messages}");
         assert!(messages.contains("file:///work/pkg/src/a.test.ts:2"), "{messages}");
         assert!(!Path::new(&outfile).exists(), "the report is removed once read");
+    }
+
+    #[test]
+    fn bun_test_live_runs_load_the_bun_reporter_and_write_no_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = vitest_script("bun", &["run", "test", "--", "./src/a.test.ts", "-t", "^add$"]);
+        c.extras.test_runner = Some("bun-test-live".into());
+        assert!(add(&mut c, dir.path(), Path::new("/")).unwrap().is_none());
+        let reporter = format!("--reporter={}", dir.path().join("bun.mjs").display());
+        assert_eq!(c.args, ["run", "test", "--", &reporter, "./src/a.test.ts", "-t", "^add$"]);
+        assert_eq!(std::fs::read_to_string(dir.path().join("bun.mjs")).unwrap(), FILES[3].1);
+        for chosen in ["--dots", "--reporter=junit"] {
+            let mut c = vitest_script("bun", &["run", "test", "--", chosen]);
+            c.extras.test_runner = Some("bun-test-live".into());
+            let before = c.clone();
+            assert!(add(&mut c, dir.path(), Path::new("/")).unwrap().is_none());
+            assert_eq!(c, before, "{chosen}");
+        }
+    }
+
+    #[test]
+    fn pytest_runs_load_the_plugin_from_the_python_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let pytest = |command: &str, args: &[&str]| {
+            let mut c = vitest_script(command, args);
+            c.kind = "pytest".into();
+            c.extras.test_runner = None;
+            c.env.insert("PYTHONPATH".into(), "/work/lib".into());
+            assert!(add(&mut c, dir.path(), Path::new("/")).unwrap().is_none());
+            c
+        };
+        let c = pytest("pytest", &["tests/test_a.py::TestA"]);
+        assert_eq!(c.args, ["-p", "openidea_pytest", "tests/test_a.py::TestA"]);
+        let path: Vec<_> = std::env::split_paths(&c.env["PYTHONPATH"]).collect();
+        assert_eq!(path, [dir.path().to_path_buf(), PathBuf::from("/work/lib")]);
+        assert!(dir.path().join("openidea_pytest.py").is_file());
+        assert_eq!(pytest("uv", &["run", "pytest", "-x"]).args, ["run", "pytest", "-p", "openidea_pytest", "-x"]);
+        assert_eq!(pytest(".venv/bin/python", &["-m", "pytest"]).args, ["-m", "pytest", "-p", "openidea_pytest"]);
+    }
+
+    #[test]
+    fn cargo_test_runs_report_libtest_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let cargo = |args: &[&str]| {
+            let mut c = vitest_script("cargo", args);
+            c.kind = "cargo".into();
+            c.extras.test_runner = None;
+            add(&mut c, dir.path(), Path::new("/")).unwrap();
+            c
+        };
+        let events = ["-Z", "unstable-options", "--format", "json", "--report-time"];
+        let c = cargo(&["test", "--test", "math"]);
+        assert_eq!(c.args, [&["test", "--test", "math", "--"][..], &events].concat());
+        assert_eq!(c.env.get("RUSTC_BOOTSTRAP").map(String::as_str), Some("1"));
+        let c = cargo(&["test", "--", "add::", "--exact"]);
+        assert_eq!(c.args, [&["test", "--", "add::", "--exact"][..], &events].concat());
+        // The run's own output format, and nextest, stay.
+        for args in [&["test", "--", "--format", "terse"][..], &["test", "--", "-q"], &["nextest", "run"]] {
+            let c = cargo(args);
+            assert_eq!(c.args, args, "{args:?}");
+            assert!(!c.env.contains_key("RUSTC_BOOTSTRAP"));
+        }
     }
 
     #[test]

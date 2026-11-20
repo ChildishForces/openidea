@@ -41,12 +41,14 @@ import {
   createTestParser,
   frameworkFor,
   hasIdeReporter,
+  reportsOnStderr,
   TestResults,
   withTestReporting,
   type TestEvent,
   type TestOutputParser,
 } from "./testing";
 import { PluginTestOutput } from "./testing/plugin";
+import { CargoTestOutput } from "./testing/cargo";
 import { GoTestOutput } from "./testing/go";
 import { SwiftTestOutput } from "./testing/swift";
 import { DotnetReports } from "./testing/dotnet";
@@ -110,6 +112,8 @@ interface SessionRuntime {
   pluginTests: PluginTestOutput | null;
   /** Machine-readable stdout (`go test -json`, `--teamcity`, the Ruby reporter): fed to the parser, shown decoded. */
   stdout: TestStdout | null;
+  /** The stderr counterpart of `stdout`, for a reporter writing there (pytest's plugin). */
+  stderr: TestStdout | null;
   queue: OutputChunk[];
   /**
    * rAF id while the page is visible, timeout id while hidden (rAF pauses in
@@ -616,7 +620,12 @@ function flush(sessionId: string) {
   rt.flushedAt = performance.now();
   const chunks = rt.queue.splice(0);
   for (const c of chunks) {
-    const text = c.kind === "stdout" && rt.stdout ? rt.stdout.feed(c.text) : c.text;
+    const text =
+      c.kind === "stdout" && rt.stdout
+        ? rt.stdout.feed(c.text)
+        : c.kind === "stderr" && rt.stderr
+          ? rt.stderr.feed(c.text)
+          : c.text;
     if (!text) continue;
     rt.console.append({ ...c, text });
     for (const l of rt.outputListeners) l(c.kind, text);
@@ -718,15 +727,20 @@ function newRuntime(config: RunConfig): SessionRuntime {
   const stdout =
     framework === "go"
       ? new GoTestOutput(feed)
-      : framework === "swift"
-        ? new SwiftTestOutput(feed)
-        : framework === "phpunit" || framework === "jvm" || (framework === "js" && hasIdeReporter(config))
-          ? new TeamcityOutput(feed)
-          : framework === "ruby" && config.kind !== "rspec"
-            ? new RubyTestOutput(feed)
-            : null;
+      : framework === "cargo"
+        ? new CargoTestOutput(feed)
+        : framework === "swift"
+          ? new SwiftTestOutput(feed)
+          : framework === "phpunit" || framework === "jvm" || (framework === "js" && hasIdeReporter(config))
+            ? new TeamcityOutput(feed)
+            : framework === "ruby" && config.kind !== "rspec"
+              ? new RubyTestOutput(feed)
+              : null;
+  // pytest's plugin writes on stderr, next to pytest's verbose lines on stdout.
+  const stderr = framework === "pytest" && reportsOnStderr(config) ? new TeamcityOutput(feed) : null;
   const runtime: SessionRuntime = {
     stdout,
+    stderr,
     tests,
     parser,
     pluginTests,
@@ -734,7 +748,8 @@ function newRuntime(config: RunConfig): SessionRuntime {
       maxChars: consoleCharLimit(),
       onLine: (text, kind) => {
         if (pluginTests && kind !== "system") pluginTests.feed(text);
-        if (parser && tests && kind !== "system" && !(kind === "stdout" && stdout)) tests.apply(parser.feed(text));
+        const filtered = (kind === "stdout" && stdout) || (kind === "stderr" && stderr);
+        if (parser && tests && kind !== "system" && !filtered) tests.apply(parser.feed(text));
         if (kind !== "system") for (const l of runtime.lineListeners) l(text);
         if (kind !== "system") runtime.dotnetReports?.feed(text);
       },
@@ -1172,9 +1187,12 @@ function finishSession(sessionId: string, code: number | null) {
     void (async () => {
       if (runtimes.get(sessionId) !== rt) return;
       flush(sessionId);
-      if (rt.stdout) {
-        const text = rt.stdout.end();
-        if (text) rt.console.append({ kind: "stdout", text });
+      for (const [kind, out] of [
+        ["stdout", rt.stdout],
+        ["stderr", rt.stderr],
+      ] as const) {
+        const text = out?.end();
+        if (text) rt.console.append({ kind, text });
       }
       rt.console.flush();
       await rt.pluginTests?.end();
