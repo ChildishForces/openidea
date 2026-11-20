@@ -600,6 +600,17 @@ describe("what JUnit XML reports say a test printed", () => {
     applyTestReports(r, [report({ name: "ok", stdout: "ok says hi" })]);
     expect(output(r, "ok")).toEqual(["ok says hi"]);
   });
+
+  it("adds no parameterized invocations beside the method the init script reported them under", () => {
+    const r = new TestResults();
+    r.apply([{ type: "result", path: ["a.B", "identifies primes"], status: "passed" }]);
+    applyTestReports(r, [report({ name: "[1] 2.0" }), report({ name: "[2] 3.0" })]);
+    expect(r.get("a.B")?.children.map((c) => c.name)).toEqual(["identifies primes"]);
+    // Surefire's console reported nothing for the class: its report's cases are the results.
+    const surefire = new TestResults();
+    applyTestReports(surefire, [report({ name: "[1] 2.0" })]);
+    expect(surefire.get("a.B")?.children.map((c) => c.name)).toEqual(["[1] 2.0"]);
+  });
 });
 
 describe("temporary configurations", () => {

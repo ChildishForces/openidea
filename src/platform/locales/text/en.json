@@ -2734,5 +2734,10 @@
   "{count} hover actions": "{count} hover actions",
   "{description}; JVM options: {flags}": "{description}; JVM options: {flags}",
   "Sorting Options": "Sorting Options",
-  "Sort by Duration": "Sort by Duration"
+  "Sort by Duration": "Sort by Duration",
+  "{testRunner} (unknown)": "{testRunner} (unknown)",
+  "Test runner": "Test runner",
+  "Test files": "Test files",
+  "Glob patterns relative to the package; separate with semicolon. Empty: the runner's defaults": "Glob patterns relative to the package; separate with semicolon. Empty: the runner's defaults",
+  "Test Results": "Test Results"
 }

@@ -577,6 +577,36 @@ fn ruby_test_runs_load_the_reporter_and_other_runs_do_not() {
 }
 
 #[test]
+fn a_report_written_by_the_run_is_reported_as_test_messages_before_it_exits() {
+    let h = harness();
+    let reporters = h.root.path().join("reporters");
+    let mut config = cfg("bun-test", "bun", &["run", "test"]);
+    config.kind = "bun".into();
+    config.is_test = true;
+    config.extras.test_runner = Some("bun-test".into());
+    let report = ide_run::test_runner::reporter::add(&mut config, &reporters, h.root.path()).unwrap().unwrap();
+    let outfile = config.args.iter().find_map(|a| a.strip_prefix("--reporter-outfile=")).unwrap().to_owned();
+    // In place of `bun test`: write the report it would.
+    let xml = r#"<testsuites><testsuite name="a.test.ts" file="a.test.ts"><testcase name="adds" file="a.test.ts" line="2"/></testsuite></testsuites>"#;
+    config.command = "/bin/sh".into();
+    config.args = vec!["-c".into(), format!("echo ran; printf '%s' '{xml}' > '{outfile}'")];
+    let options = StartOptions { end_report: Some(report), ..Default::default() };
+    let chunks: Chunks = Arc::default();
+    let sink = chunks.clone();
+    let info =
+        h.pm.start(h.root.path(), &config, &options, h.sink.clone(), Box::new(move |c| sink.lock().push(c))).unwrap();
+    assert_eq!(wait_exit(&h, info.id, Duration::from_secs(10)), Some(0));
+    let out = text(&chunks, stdout);
+    assert!(out.starts_with("ran\n##teamcity[testSuiteStarted name='a.test.ts'"), "{out}");
+    assert!(out.contains("testStarted name='adds'"), "{out}");
+    let all = chunks.lock();
+    let messages = all.iter().position(|c| stdout(c).is_some_and(|t| t.contains("##teamcity"))).unwrap();
+    let exit = all.iter().rposition(|c| system(c).is_some()).unwrap();
+    assert!(messages < exit, "the tests are reported before the run ends");
+    assert!(!Path::new(&outfile).exists());
+}
+
+#[test]
 fn revoking_one_project_stops_only_its_runs() {
     let h = harness();
     let other = tempfile::tempdir().unwrap();

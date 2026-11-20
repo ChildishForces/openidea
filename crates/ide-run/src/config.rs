@@ -118,6 +118,10 @@ struct FileConfig {
     #[serde(alias = "stopCommand")]
     stop_command: Option<String>,
     target: Option<String>,
+    #[serde(alias = "testRunner")]
+    test_runner: Option<String>,
+    #[serde(default, alias = "testFiles")]
+    test_files: Vec<String>,
 }
 
 pub(crate) fn slug(s: &str) -> String {
@@ -183,6 +187,8 @@ fn convert(configs: Vec<FileConfig>, local: bool) -> Vec<RunConfig> {
                 emulate_terminal: c.emulate_terminal,
                 stop_command: non_empty(c.stop_command),
                 target: non_empty(c.target),
+                test_runner: non_empty(c.test_runner),
+                test_files: c.test_files.into_iter().filter(|f| !f.trim().is_empty()).collect(),
             },
         });
     }
@@ -297,6 +303,12 @@ fn to_table(c: &RunConfig) -> Table {
     }
     if let Some(target) = &x.target {
         t.insert("target", value(target));
+    }
+    if let Some(runner) = &x.test_runner {
+        t.insert("test-runner", value(runner));
+    }
+    if !x.test_files.is_empty() {
+        t.insert("test-files", value(x.test_files.iter().collect::<Array>()));
     }
     t
 }

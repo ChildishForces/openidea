@@ -1413,6 +1413,8 @@ export const commands = {
 	 *  `module` (relative to the project root) written since `since_ms` (Unix epoch, ms).
 	 */
 	runTestReports: (module: string | null, sinceMs: number | null) => typedError<TestCaseReport[], IdeError>(__TAURI_INVOKE("run_test_reports", { module, sinceMs })),
+	/**  The test frameworks a test configuration can name, with their default test files. */
+	runTestRunners: () => typedError<TestRunnerInfo[], IdeError>(__TAURI_INVOKE("run_test_runners")),
 	runTomcatArtifacts: () => typedError<WebArtifact[], IdeError>(__TAURI_INVOKE("run_tomcat_artifacts")),
 	runTomcatBuild: (config: RunConfig_Deserialize) => typedError<({
 	/**  Stable id, e.g. `npm:dev`, `cargo:run:app`, or a uuid for user-defined. */
@@ -10724,6 +10726,10 @@ export type RunExtras_Deserialize = {
 	stopCommand?: string | null,
 	/**  Settings › Run Targets id the process runs on (over SSH); `None` = this machine. */
 	target?: string | null,
+	/**  Test configurations: the framework they run ([`test_runner::builtin`] id); `None` = unknown. */
+	testRunner?: string | null,
+	/**  Test configurations: the files they run (globs); empty = the runner's defaults. */
+	testFiles?: string[],
 };
 
 export type RunExtras_Serialize = {
@@ -10768,6 +10774,10 @@ export type RunExtras_Serialize = {
 	stopCommand?: string | null,
 	/**  Settings › Run Targets id the process runs on (over SSH); `None` = this machine. */
 	target?: string | null,
+	/**  Test configurations: the framework they run ([`test_runner::builtin`] id); `None` = unknown. */
+	testRunner?: string | null,
+	/**  Test configurations: the files they run (globs); empty = the runner's defaults. */
+	testFiles?: string[],
 };
 
 /**  A process started from a run configuration. */
@@ -11946,6 +11956,17 @@ export type TestOutput = {
 export type TestPassed = {
 	id: string,
 	durationMs: number | null,
+};
+
+/**  A test framework the IDE knows how to run. */
+export type TestRunnerInfo = {
+	/**  Stable id stored in configurations, e.g. `vitest`. */
+	id: string,
+	label: string,
+	/**  Configuration kinds that can run this framework's tests (e.g. `npm` scripts). */
+	configKinds: string[],
+	/**  Files it runs by default (globs relative to the configuration's module). */
+	testFiles: string[],
 };
 
 /**  Incremental test tree data. */

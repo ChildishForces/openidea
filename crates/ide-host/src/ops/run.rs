@@ -423,6 +423,7 @@ async fn start_inner(
                     encoding: Some(settings.console.encoding).filter(|e| !e.trim().is_empty()),
                     python_paths: Vec::new(),
                     ruby_reporter: None,
+                    end_report: None,
                 },
                 sink,
                 Box::new(move |c| on_output(c)),
@@ -439,6 +440,7 @@ async fn start_inner(
                 python_paths: Vec::new(),
                 // A folder on this machine: not in the container.
                 ruby_reporter: None,
+                end_report: None,
             };
             project.require_trust()?;
             return host.processes.start(
@@ -515,11 +517,18 @@ async fn start_inner(
             })
             .await?;
     }
+    let reporters = host.local_data_dir.join("test-reporters");
+    let run_dir = ide_run::wrap::run_dir(&project.root, &config);
+    let end_report = ide_run::test_runner::reporter::add(&mut config, &reporters, &run_dir).unwrap_or_else(|e| {
+        tracing::warn!("cannot install the IDE's test reporters in {}: {e}", reporters.display());
+        None
+    });
     let encoding = settings.console.encoding;
     let options = StartOptions {
         encoding: Some(encoding).filter(|e| !e.trim().is_empty()),
         python_paths: if *root != project.root { vec![root.clone()] } else { super::python::paths(&project) },
         ruby_reporter: ruby_reporter_dir(host, &config),
+        end_report,
     };
     project.require_trust()?;
     if config.kind == "go" && matches!(config.args.first().map(String::as_str), Some("mod" | "work")) {

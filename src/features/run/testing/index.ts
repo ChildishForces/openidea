@@ -1,5 +1,6 @@
 /** Picks the test output parser for a run configuration. */
 import type { RunConfig } from "@/platform/ipc";
+import { isWindows } from "../jvmTypes";
 import { cargoParser } from "./cargo";
 import { goParser } from "./go";
 import { jsParser } from "./js";
@@ -7,6 +8,8 @@ import { jvmParser } from "./jvm";
 import { phpunitParser, withTeamcity } from "./phpunit";
 import { pytestParser } from "./pytest";
 import { rubyParser } from "./ruby";
+import { SWIFT_EVENT_STREAM, swiftParser } from "./swift";
+import { teamcityTreeParser } from "./teamcityTree";
 import { unittestParser } from "./unittest";
 import { zigParser } from "./zig";
 import type { TestEvent, TestOutputParser } from "./types";
@@ -22,6 +25,7 @@ export {
   phpunitParser,
   pytestParser,
   rubyParser,
+  swiftParser,
   unittestParser,
   zigParser,
 };
@@ -45,6 +49,7 @@ export type Framework =
   | "ruby"
   | "dotnet"
   | "zig"
+  | "swift"
   | "auto";
 
 export function frameworkFor(config: Pick<RunConfig, "kind" | "command" | "args">): Framework {
@@ -78,6 +83,8 @@ export function frameworkFor(config: Pick<RunConfig, "kind" | "command" | "args"
       return "ruby";
     case "zig":
       return "zig";
+    case "swift":
+      if (config.args[0] === "test") return "swift";
   }
   if (/(^|[/\\])dotnet(?:\.exe)?$/i.test(config.command) && config.args[0] === "test") return "dotnet";
   if (/\bcargo\b/.test(cmd)) return "cargo";
@@ -87,6 +94,7 @@ export function frameworkFor(config: Pick<RunConfig, "kind" | "command" | "args"
   if (/(^|[/\\\s])(phpunit|pest)(\.phar|\.bat)?(\s|$)/.test(cmd)) return "phpunit";
   if (/\bgo\s+test\b/.test(cmd)) return "go";
   if (/\b(gradlew?|mvnw?)\b/.test(cmd)) return "jvm";
+  if (/(^|[/\\])swift\s+test\b/.test(cmd)) return "swift";
   return "auto";
 }
 
@@ -122,6 +130,11 @@ export function withTestReporting<T extends Pick<RunConfig, "kind" | "command" |
     };
   }
   if (frameworkFor(config) === "phpunit") return { ...config, args: withTeamcity(config.args) };
+  if (frameworkFor(config) === "swift" && config.args[0] === "test" && !isWindows()) {
+    // Swift Testing's event stream names each test's suite and source; its console output doesn't.
+    const chosen = config.args.some((a) => a.startsWith("--experimental-event-stream-output"));
+    return chosen ? config : { ...config, args: [...config.args, ...SWIFT_EVENT_STREAM] };
+  }
   if (frameworkFor(config) === "zig" && config.args[0] === "build") {
     // `zig build test` prints nothing for a passing (or cached) run; the summary reports the counts.
     return config.args.includes("--summary") ? config : { ...config, args: [...config.args, "--summary", "all"] };
@@ -139,14 +152,24 @@ export function withTestReporting<T extends Pick<RunConfig, "kind" | "command" |
   return chosen ? config : { ...config, args: [...config.args, "-v"] };
 }
 
-export function createTestParser(config: Pick<RunConfig, "kind" | "command" | "args">): TestOutputParser {
+/** Test runners the IDE loads its own reporter into, or whose report it reads (`crates/ide-run/src/test_runner/reporter.rs`). */
+const IDE_REPORTERS = new Set(["vitest", "jest", "node-test", "bun-test"]);
+
+/** The run reports its tests as TeamCity service messages through the IDE's reporter. */
+export function hasIdeReporter(config: Pick<RunConfig, "testRunner">): boolean {
+  return !!config.testRunner && IDE_REPORTERS.has(config.testRunner);
+}
+
+export function createTestParser(
+  config: Pick<RunConfig, "kind" | "command" | "args" | "testRunner">,
+): TestOutputParser {
   switch (frameworkFor(config)) {
     case "dotnet":
       return { feed: () => [] };
     case "cargo":
       return cargoParser();
     case "js":
-      return jsParser();
+      return hasIdeReporter(config) ? teamcityTreeParser(jsParser()) : jsParser();
     case "pytest":
       return pytestParser();
     case "unittest":
@@ -161,6 +184,8 @@ export function createTestParser(config: Pick<RunConfig, "kind" | "command" | "a
       return rubyParser();
     case "zig":
       return zigParser();
+    case "swift":
+      return swiftParser();
     default:
       return combinedParser([
         cargoParser(),

@@ -14,12 +14,15 @@ import { typeFor } from "./types";
 import { runTemplate } from "./runTemplates";
 import { appendScriptArgs } from "./scriptArgs";
 import { csharpTargets } from "./csharpTargets";
+import { swiftFileFilter, swiftTargets, withoutSwiftFilter } from "./swiftTargets";
 
 export type FileRole = "test" | "main" | "script" | null;
 
 /** `django`: a Django project, whose default test module is `tests.py` (elsewhere a script). */
 export function fileRole(relPath: string, content?: string, windows = isWindows(), django = false): FileRole {
   if (/\.cs$/i.test(relPath) && content && csharpTargets(content).some((target) => target.kind === "test"))
+    return "test";
+  if (/\.swift$/.test(relPath) && content && swiftTargets(content).some((target) => target.kind === "test"))
     return "test";
   const name = relPath.split("/").pop() ?? relPath;
   // A JVM class with a `main` is a runnable program even when its name looks like
@@ -59,6 +62,7 @@ function testKinds(relPath: string): string[] {
   if (/\.go$/.test(relPath)) return ["go"];
   if (/\.rs$/.test(relPath)) return ["cargo"];
   if (/\.(kt|java|scala|groovy)$/.test(relPath)) return ["gradle", "maven"];
+  if (/\.swift$/.test(relPath)) return ["swift"];
   return [];
 }
 
@@ -242,6 +246,10 @@ export function testConfigFor(
     }
     case "deno":
       return derived(base, relPath, { args: [...base.args, file] });
+    case "swift": {
+      const filter = content === undefined ? null : swiftFileFilter(content);
+      return filter ? derived(base, relPath, { args: [...withoutSwiftFilter(base.args), "--filter", filter] }) : null;
+    }
     case "pytest":
     case "python":
     case "rspec":

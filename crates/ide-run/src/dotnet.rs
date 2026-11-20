@@ -105,14 +105,28 @@ pub fn parse_project(xml: &str) -> Option<Project> {
         .filter(|v| !v.is_empty())
         .map(str::to_owned)
         .collect();
-    let test = tags.iter().any(|t| {
-        t.name == "PackageReference"
-            && t.attrs
-                .get("Include")
-                .or_else(|| t.attrs.get("Update"))
-                .is_some_and(|v| v.eq_ignore_ascii_case("Microsoft.NET.Test.Sdk"))
+    let sdk_test = tags.iter().any(|t| {
+        t.attrs.get("Sdk").or_else(|| (t.name == "Sdk").then(|| t.attrs.get("Name")).flatten()).is_some_and(|s| {
+            s.split(';').any(|sdk| sdk.split('/').next().is_some_and(|n| n.eq_ignore_ascii_case("MSTest.Sdk")))
+        })
     });
+    let package_test = tags.iter().any(|t| {
+        t.name == "PackageReference"
+            && t.attrs.get("Include").or_else(|| t.attrs.get("Update")).is_some_and(|v| is_test_package(v))
+    });
+    let test = match property("IsTestProject") {
+        Some(v) if !v.is_empty() => v.eq_ignore_ascii_case("true"),
+        _ => sdk_test || package_test,
+    };
     Some(Project { executable, frameworks, test })
+}
+
+/// A package that makes a project a test project: VSTest's SDK, or a framework that runs on
+/// Microsoft.Testing.Platform without it (xUnit v3, MSTest, TUnit).
+fn is_test_package(id: &str) -> bool {
+    let id = id.to_ascii_lowercase();
+    matches!(id.as_str(), "microsoft.net.test.sdk" | "xunit.v3" | "mstest" | "tunit" | "microsoft.testing.platform")
+        || id.starts_with("xunit.v3.mtp-")
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

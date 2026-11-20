@@ -68,7 +68,6 @@ fn rust_module_prefix(rel: &str) -> Vec<String> {
 }
 
 re!(RUST_TEST_ATTR, r"^#\[(?:[\w:]+::)?test\b|^#\[(?:tokio|async_std|actix_rt|rstest|test_case)(?:::\w+)?\b");
-re!(RUST_CFG_TEST, r"^#\[cfg\(test\)\]");
 re!(RUST_FN, r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)");
 re!(RUST_MOD, r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*\{");
 re!(RUST_MAIN_FILE, r"(?:^|/)(?:src/main|src/bin/[^/]+|examples/[^/]+)\.rs$");
@@ -79,15 +78,11 @@ fn rust_targets(lines: &[&str], rel: &str) -> Vec<Target> {
     let mut mods: Vec<(String, i64)> = Vec::new();
     let mut depth: i64 = 0;
     let mut pending_test = false;
-    let mut pending_cfg_test = false;
     for (i, raw) in lines.iter().enumerate() {
         let line = code_only(raw);
         let trimmed = line.trim();
         if RUST_TEST_ATTR.is_match(trimmed) {
             pending_test = true;
-        }
-        if RUST_CFG_TEST.is_match(trimmed) {
-            pending_cfg_test = true;
         }
         let mod_path = || prefix.iter().cloned().chain(mods.iter().map(|m| m.0.clone())).collect::<Vec<_>>();
         if let Some(f) = RUST_FN.captures(trimmed) {
@@ -100,22 +95,16 @@ fn rust_targets(lines: &[&str], rel: &str) -> Vec<Target> {
                 out.push(Target { line: i, kind: Kind::Main, name, path: Vec::new() });
             }
             pending_test = false;
-            pending_cfg_test = false;
         } else if let Some(m) = RUST_MOD.captures(trimmed) {
             let name = m[1].to_owned();
             let mut path = mod_path();
             path.push(name.clone());
-            if pending_cfg_test || name == "tests" {
-                out.push(Target { line: i, kind: Kind::Suite, name: name.clone(), path });
-            }
+            // Any inline module with tests runs as a suite.
+            out.push(Target { line: i, kind: Kind::Suite, name: name.clone(), path });
             mods.push((name, depth));
             pending_test = false;
-            pending_cfg_test = false;
         } else if !trimmed.is_empty() && !trimmed.starts_with("#[") && !trimmed.starts_with("//") {
             pending_test = false;
-            if !trimmed.starts_with('#') {
-                pending_cfg_test = false;
-            }
         }
         for ch in line.chars() {
             if ch == '{' {
@@ -202,6 +191,8 @@ fn js_name_pattern(target: &Target) -> String {
     let pattern = JS_PATTERN_PLACEHOLDER.replace_all(&pattern, ".*");
     if target.kind == Kind::Suite { format!("^{pattern}") } else { format!("^{pattern}$") }
 }
+
+re!(NODE_TEST_IMPORT, r#"\bfrom\s+["']node:test["']|\brequire\(\s*["']node:test["']\s*\)"#);
 
 // ---------------------------------------------------------------- Python
 
@@ -786,6 +777,15 @@ pub fn target_config(
     };
     let with = |extra: Vec<String>| [file.args.clone(), extra].concat();
     match file.kind.as_str() {
+        // `node --test` reads `--test-name-pattern` (not `-t`), and only before the first file.
+        // The detected runner decides; without one, an import of `node:test`.
+        "npm" | "bun" | "deno"
+            if file.extras.test_runner.as_deref().map_or(NODE_TEST_IMPORT.is_match(content), |r| r == "node-test") =>
+        {
+            let mut args = file.args.clone();
+            args.insert(args.len().saturating_sub(1), format!("--test-name-pattern={}", js_name_pattern(target)));
+            Some(named(args))
+        }
         "npm" | "bun" | "deno" => Some(named(with(vec!["-t".into(), js_name_pattern(target)]))),
         "pytest" | "python" => {
             Some(named(replace_last(file.args.clone(), |f| format!("{f}::{}", target.path.join("::")))))
@@ -868,6 +868,11 @@ mod tests {
             [(1, Kind::Test, "foo/bar/x".into())]
         );
         assert!(detect("fn main() {}", "src/lib.rs").is_empty());
+        let integration = "mod add {\n    #[test]\n    fn adds() {}\n}\nmod helpers {\n    fn h() {}\n}";
+        assert_eq!(
+            pick(&detect(integration, "tests/math.rs")),
+            [(0, Kind::Suite, "add".into()), (2, Kind::Test, "add/adds".into())]
+        );
     }
 
     #[test]
@@ -960,6 +965,38 @@ mod tests {
         assert_eq!(c.args, ["test", "-p", "ide-mcp", "--", "stdio::tests::adds", "--exact"]);
         let c = target_config(root, &ts[1], "src/lib.rs", &configs, src).unwrap();
         assert!(!c.args.iter().any(|a| a == "-p"), "outside every member: the workspace's tests, {:?}", c.args);
+    }
+
+    #[test]
+    fn js_targets_filter_by_name_with_the_files_runner_flag() {
+        let root = Path::new("/p");
+        let mut test = blank("npm:test".into(), "test", "npm", "pnpm".into(), vec!["run".into(), "test".into()]);
+        test.is_test = true;
+        let configs = vec![test];
+        let body = "describe('m', () => {\n  it('adds', () => {});\n});\n";
+        let ts = detect(body, "src/a.test.ts");
+        let c = target_config(root, &ts[0], "src/a.test.ts", &configs, body).unwrap();
+        assert_eq!(c.args, ["run", "test", "--", "src/a.test.ts", "-t", "^m"]);
+
+        let src = format!("import {{ describe, it }} from \"node:test\";\n{body}");
+        let ts = detect(&src, "src/a.test.ts");
+        let c = target_config(root, &ts[0], "src/a.test.ts", &configs, &src).unwrap();
+        assert_eq!(c.args, ["run", "test", "--", "--test-name-pattern=^m", "src/a.test.ts"]);
+        let c = target_config(root, &ts[1], "src/a.test.ts", &configs, &src).unwrap();
+        assert_eq!(c.args, ["run", "test", "--", "--test-name-pattern=^m adds$", "src/a.test.ts"]);
+
+        // The configuration's detected runner decides over the file's imports.
+        let runs = |runner: &str| {
+            let mut c = configs[0].clone();
+            c.extras.test_runner = Some(runner.into());
+            vec![c]
+        };
+        let ts = detect(body, "src/a.test.ts");
+        let c = target_config(root, &ts[0], "src/a.test.ts", &runs("node-test"), body).unwrap();
+        assert_eq!(c.args, ["run", "test", "--", "--test-name-pattern=^m", "src/a.test.ts"]);
+        let ts = detect(&src, "src/a.test.ts");
+        let c = target_config(root, &ts[0], "src/a.test.ts", &runs("vitest"), &src).unwrap();
+        assert_eq!(c.args, ["run", "test", "--", "src/a.test.ts", "-t", "^m"]);
     }
 
     #[test]

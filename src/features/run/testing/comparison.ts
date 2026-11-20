@@ -33,6 +33,9 @@ export function parseComparison(output: readonly string[]): Comparison | null {
       actual: lines[left + 1]!.replace(/^\s*right:\s*/, ""),
       labels: { expected: "Left", actual: "Right" },
     };
+  // XCTest `XCTAssertEqual`: `("1") is not equal to ("2")` (no side is the expected one).
+  if ((m = /\("([\s\S]*?)"\) is not equal to \("([\s\S]*?)"\)/.exec(text)))
+    return { expected: m[1]!, actual: m[2]!, labels: { expected: "Left", actual: "Right" } };
   // Jest / Vitest: `Expected: x` then `Received: y`.
   const exp = lines.findIndex((l) => /^\s*Expected:\s/.test(l));
   const rec = exp >= 0 ? lines.findIndex((l, i) => i > exp && /^\s*Received:\s/.test(l)) : -1;

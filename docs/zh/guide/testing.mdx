@@ -35,12 +35,13 @@ OpenIDEA 直接使用项目自己的测试工具（Cargo、Jest、pytest、Maven
 | PHP                         | PHPUnit 测试类和方法，Pest 的 `test` / `it` / `describe`                                      | PHPUnit、Pest                                         |
 | Ruby                        | Minitest 和 Test::Unit 测试类、包含它们的模块、`def test_*`                                   | 通过 `ruby` 或 `rake test` 运行 Minitest              |
 | C#                          | xUnit `[Fact]` / `[Theory]`、NUnit `[Test]` / `[TestCase]`、MSTest `[TestMethod]`             | `dotnet test`（VSTest 或 Microsoft.Testing.Platform） |
+| Swift                       | Swift Testing 的 `@Test` 函数和 `@Suite` 类型、XCTest 的 `test…` 方法                         | `swift test`                                          |
 
 RSpec 有自己的配置类型（**RSpec 测试**）和检测到的 `rspec` 配置，但没有装订区图标。插件可以接入新的测试框架，结果显示在同一个测试树中。
 
 <Note>
-  使用 Microsoft.Testing.Platform 的 .NET 项目，需要在 .NET 工具窗口中运行 **安装 TRX
-  报告支持**，测试结果才会显示在测试树里。参见[构建工具](/zh/guide/build-tools)。
+  使用 Microsoft.Testing.Platform 的 MSTest、NUnit 或 TUnit 项目，需要在 .NET 工具窗口中运行 **安装 TRX
+  报告支持**，测试结果才会显示在测试树里。xUnit v3 项目无需安装即可显示结果。参见[构建工具](/zh/guide/build-tools)。
 </Note>
 
 ## 测试结果视图
@@ -54,6 +55,8 @@ RSpec 有自己的配置类型（**RSpec 测试**）和检测到的 `rspec` 配�
 - 对于带有期望值和实际值的断言失败，**显示差异** 会把两者并排对比。
 
 检测到的测试配置会自动把结果显示在测试树中。自己创建的配置需要打开 **修改选项 › 在测试运行器中显示结果**。
+
+JavaScript 或 TypeScript 测试配置还会指定其 **测试运行器**：Jest、Vitest、Mocha、Node.js test runner、Bun test 或 Deno test。OpenIDEA 根据脚本运行的命令（包括它调用的其他脚本）检测运行器，否则根据包依赖的测试框架及其配置文件判断。可以在配置表单中修改运行器，或设置该配置覆盖的 **测试文件**。
 
 ## 重新运行
 

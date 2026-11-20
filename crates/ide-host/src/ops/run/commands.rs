@@ -136,6 +136,12 @@ pub fn run_system_env() -> std::collections::BTreeMap<String, String> {
     ide_run::system_env()
 }
 
+/// The test frameworks a test configuration can name, with their default test files.
+#[command(trust = always)]
+pub fn run_test_runners() -> IdeResult<Vec<ide_run::test_runner::TestRunnerInfo>> {
+    Ok(ide_run::test_runner::builtin())
+}
+
 /// Variables of the `.env` files a debug launch names, for the debugger to start with.
 #[command(trust = trusted)]
 pub async fn run_env_files(files: Vec<std::path::PathBuf>) -> IdeResult<std::collections::BTreeMap<String, String>> {
@@ -425,6 +431,7 @@ ide_command::domain!(
     run_system_env,
     run_templates,
     run_test_reports,
+    run_test_runners,
     run_tomcat_artifacts,
     run_tomcat_build,
     run_tomcat_home,

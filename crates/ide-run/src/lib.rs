@@ -16,6 +16,7 @@ pub mod python_path;
 pub mod ruby_preload;
 pub mod ruby_reporter;
 pub mod scope;
+pub mod test_runner;
 pub mod tomcat;
 mod utf8;
 pub mod which;
@@ -182,6 +183,14 @@ pub struct RunExtras {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[specta(optional)]
     pub target: Option<String>,
+    /// Test configurations: the framework they run ([`test_runner::builtin`] id); `None` = unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(optional)]
+    pub test_runner: Option<String>,
+    /// Test configurations: the files they run (globs); empty = the runner's defaults.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[specta(optional)]
+    pub test_files: Vec<String>,
 }
 
 impl Default for RunExtras {
@@ -205,6 +214,8 @@ impl Default for RunExtras {
             emulate_terminal: false,
             stop_command: None,
             target: None,
+            test_runner: None,
+            test_files: Vec::new(),
         }
     }
 }

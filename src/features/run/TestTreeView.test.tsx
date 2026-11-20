@@ -235,7 +235,22 @@ describe("Expand All / Collapse All", () => {
   const view = (results: TestResults) => (
     <TestTreeView results={results} version={1} cwd="/p" selected={null} onSelect={() => {}} running={false} />
   );
-  const rows = () => screen.queryAllByRole("treeitem").map((r) => r.textContent?.replace(/\d+ ms$/, ""));
+  // The test files and what is under them ("Test Results", the top node, is always open).
+  const rows = () =>
+    screen
+      .queryAllByRole("treeitem")
+      .map((r) => r.textContent?.replace(/\d+ ms$/, ""))
+      .filter((r) => r !== "Test Results");
+
+  it('puts the run under a "Test Results" node, with its status and duration', () => {
+    localStorage.setItem("openidea.run.testFilters", JSON.stringify({ showPassed: true }));
+    render(view(nested()));
+    const top = screen.getAllByRole("treeitem")[0]!;
+    expect(top.textContent).toMatch(/^Test Results/);
+    expect(top).toHaveAttribute("aria-expanded", "true");
+    expect(top).toHaveAttribute("aria-level", "1");
+    expect(screen.getByText("ApiTest").closest('[role="treeitem"]')).toHaveAttribute("aria-level", "2");
+  });
 
   it("opens every suite, including those of hidden passed tests, and folds back to the top-level suites", () => {
     localStorage.setItem("openidea.run.testFilters", JSON.stringify({ showPassed: true }));
@@ -352,7 +367,11 @@ describe("Sorting Options", () => {
   const view = (results: TestResults, running = false) => (
     <TestTreeView results={results} version={1} cwd="/p" selected={null} onSelect={() => {}} running={running} />
   );
-  const rows = () => screen.getAllByRole("treeitem").map((el) => el.textContent!.replace(/[\d.]+ m?s$/, ""));
+  const rows = () =>
+    screen
+      .getAllByRole("treeitem")
+      .map((el) => el.textContent!.replace(/[\d.]+ m?s$/, ""))
+      .filter((r) => r !== "Test Results");
   const option = (name: string) => {
     fireEvent.click(screen.getByRole("button", { name: "Sorting Options" }));
     return screen.getByRole("menuitemcheckbox", { name });

@@ -89,6 +89,8 @@ pub struct StartOptions {
     pub python_paths: Vec<PathBuf>,
     /// Where the Ruby test reporter is installed (see [`crate::ruby_reporter`]); Ruby test runs load it.
     pub ruby_reporter: Option<PathBuf>,
+    /// A test report the run writes, reported on stdout as test messages when the run ends.
+    pub end_report: Option<crate::test_runner::reporter::EndReport>,
 }
 
 #[derive(Default)]
@@ -509,7 +511,8 @@ impl ProcessManager {
                 )?;
             }
             let decoder = || OutputDecoder::for_pipes(options.encoding.as_deref());
-            spawn_pump(rx, on_output.clone(), entry.clone(), sink, [decoder(), decoder()], notice)?;
+            let report = options.end_report.clone();
+            spawn_pump(rx, on_output.clone(), entry.clone(), sink, [decoder(), decoder()], notice, report)?;
             Ok(())
         })();
         if let Err(e) = result {
@@ -642,7 +645,7 @@ impl ProcessManager {
         )
         .and_then(|_| {
             let decoder = || OutputDecoder::for_label(options.encoding.as_deref());
-            spawn_pump(rx, on_output, entry.clone(), sink, [decoder(), decoder()], None)
+            spawn_pump(rx, on_output, entry.clone(), sink, [decoder(), decoder()], None, options.end_report.clone())
         });
         if let Err(e) = result {
             let _ = child.kill();
@@ -1172,6 +1175,7 @@ fn spawn_pump(
     sink: SharedSink,
     decoders: [OutputDecoder; 2],
     notice: Option<String>,
+    end_report: Option<crate::test_runner::reporter::EndReport>,
 ) -> std::io::Result<()> {
     std::thread::Builder::new().name(format!("openidea-run-pump-{}", entry.id.0)).spawn(move || {
         let [mut out_dec, mut err_dec] = decoders;
@@ -1272,6 +1276,10 @@ fn spawn_pump(
             if !rest.is_empty() {
                 on_output(chunk(stream, rest));
             }
+        }
+        // Before the exit: the run is over once its tests are reported.
+        if let Some(text) = end_report.as_ref().and_then(|r| r.take()) {
+            on_output(OutputChunk::Stdout { text });
         }
 
         let (code, message) = describe_exit(status);

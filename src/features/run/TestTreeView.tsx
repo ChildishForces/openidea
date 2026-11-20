@@ -92,6 +92,9 @@ const treeModel = {
   isOccurrence: isFailedTest,
 };
 
+/** The tree's top node, "Test Results" (as in IDEA): the whole run, with the test files under it. */
+const ROOT_ID = "\u0000results";
+
 function suiteIds(nodes: readonly TestNode[], out: Set<string> = new Set()): Set<string> {
   for (const n of nodes) {
     if (n.children.length === 0) continue;
@@ -179,8 +182,19 @@ export function TestTreeView({
 
   const contextMenu = (node: TestNode | null, sel: Set<string>, e: MouseEvent) => {
     if (!node) return;
-    const ids = sel.has(node.id) ? [...sel] : [node.id];
-    const name = ids.length === 1 ? (results.get(ids[0]!)?.name ?? node.name) : `${ids.length} tests`;
+    // Running "Test Results" runs every file again.
+    const ids =
+      node.id === ROOT_ID
+        ? node.children.map((c) => c.id)
+        : sel.has(node.id)
+          ? [...sel].filter((id) => id !== ROOT_ID)
+          : [node.id];
+    const name =
+      node.id === ROOT_ID
+        ? node.name
+        : ids.length === 1
+          ? (results.get(ids[0]!)?.name ?? node.name)
+          : `${ids.length} tests`;
     const located = node.location ?? firstLocated(node)?.location;
     e.preventDefault();
     const supported = onRunTests ? (canRunTests?.(ids) ?? true) : false;
@@ -234,11 +248,28 @@ export function TestTreeView({
     const shown = showPassed && showIgnored ? [...results.roots] : filterTree(results.roots, keep);
     return byDuration || sortAlphabetically ? sortTree(shown, byDuration) : shown;
   }, [results, version, showPassed, showIgnored, sortAlphabetically, byDuration]); // eslint-disable-line react-hooks/exhaustive-deps
+  const top = useMemo(
+    (): TestNode[] =>
+      roots.length
+        ? [
+            {
+              id: ROOT_ID,
+              name: tx("Test Results"),
+              path: [],
+              children: roots,
+              own: running ? "running" : null,
+              durationMs: results.summary.durationMs,
+              output: [],
+            },
+          ]
+        : [],
+    [roots, running, results.summary.durationMs],
+  );
 
   // Expand failed suites by default (IDEA reveals failures); the user's toggles win afterwards.
   const effectiveExpanded = useMemo(() => {
     if (expanded) return expanded;
-    const set = new Set<string>();
+    const set = new Set<string>([ROOT_ID]);
     const visit = (nodes: readonly TestNode[], depth: number) => {
       for (const n of nodes) {
         if (n.children.length === 0) continue;
@@ -252,10 +283,10 @@ export function TestTreeView({
 
   // Export Test Results waits for the run to finish.
   const canExport = !running && !results.isEmpty;
-  // Collapse All leaves the top-level suites in view, as IDEA's test tree does.
+  // Collapse All leaves the test files in view under "Test Results", as IDEA's test tree does.
   useEffect(() => {
-    testTree.expandAll = () => setExpanded(suiteIds(results.roots));
-    testTree.collapseAll = () => setExpanded(new Set());
+    testTree.expandAll = () => setExpanded(suiteIds(results.roots, new Set([ROOT_ID])));
+    testTree.collapseAll = () => setExpanded(new Set([ROOT_ID]));
     testTree.exportResults = canExport ? () => setExporting(true) : null;
     return () => {
       testTree.expandAll = null;
@@ -373,7 +404,7 @@ export function TestTreeView({
         className={styles.testTree}
         handleRef={tree}
         focusContext={TEST_TREE_FOCUS}
-        roots={roots}
+        roots={top}
         getKey={(n) => n.id}
         getLabel={(n) => n.name}
         getChildren={(n) => (n.children.length ? n.children : undefined)}

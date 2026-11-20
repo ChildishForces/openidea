@@ -40,6 +40,12 @@ describe("detectRunTargets", () => {
     ]);
     expect(pick(detectRunTargets("#[test]\nfn x() {}", "crates/a/src/foo/bar.rs"))).toEqual([[1, "test", "foo/bar/x"]]);
     expect(detectRunTargets("fn main() {}", "src/lib.rs")).toEqual([]);
+    // Integration tests group tests in plain modules; a module without tests is no suite.
+    const integration = "mod add {\n    #[test]\n    fn adds() {}\n}\nmod helpers {\n    fn h() {}\n}";
+    expect(pick(detectRunTargets(integration, "tests/math.rs"))).toEqual([
+      [0, "suite", "add"],
+      [2, "test", "add/adds"],
+    ]);
   });
 
   it("js/ts: describe chains and test names", () => {
@@ -174,6 +180,24 @@ describe("targetConfig", () => {
       "-t",
       "^m adds$",
     ]);
+    const js = "describe('m', () => {\n  it('adds', () => {});\n});";
+    const jsArgs = (src: string, i: number) =>
+      targetConfig(detectRunTargets(src, "src/a.test.ts")[i]!, "src/a.test.ts", configs, src)!.args;
+    expect(jsArgs(js, 0)).toEqual(["run", "test", "src/a.test.ts", "-t", "^m"]);
+    // node:test ignores `-t`, and reads options only before the first file.
+    const nodeTest = `import { describe, it } from "node:test";\n${js}`;
+    expect(jsArgs(nodeTest, 0)).toEqual(["run", "test", "--test-name-pattern=^m", "src/a.test.ts"]);
+    expect(jsArgs(nodeTest, 1)).toEqual(["run", "test", "--test-name-pattern=^m adds$", "src/a.test.ts"]);
+    // The configuration's detected runner decides over the file's imports.
+    const runner = (testRunner: string, src: string) =>
+      targetConfig(
+        detectRunTargets(src, "src/a.test.ts")[0]!,
+        "src/a.test.ts",
+        configs.map((c) => (c.kind === "npm" ? { ...c, testRunner } : c)),
+        src,
+      )!.args;
+    expect(runner("node-test", js)).toEqual(["run", "test", "--test-name-pattern=^m", "src/a.test.ts"]);
+    expect(runner("vitest", nodeTest)).toEqual(["run", "test", "src/a.test.ts", "-t", "^m"]);
     expect(first("class TestC:\n    def test_a(self): pass", "tests/test_c.py").args).toEqual([
       "tests/test_c.py::TestC::test_a",
     ]);

@@ -84,6 +84,7 @@ pub(crate) fn detect_with_profiles(
         }
     }
     detect_projects(root, &["build.zig"], zig::detect, &mut out);
+    detect_projects(root, &["Package.swift"], detect_swift, &mut out);
     dotnet::detect(root, &mut out);
     detect_projects(root, &["Makefile", "makefile", "GNUmakefile"], detect_make, &mut out);
     detect_projects(root, &["justfile", "Justfile", ".justfile"], detect_just, &mut out);
@@ -243,7 +244,14 @@ pub(crate) fn is_test_script(name: &str) -> bool {
     matches!(name, "test" | "vitest" | "jest") || name.starts_with("test:")
 }
 
-fn push_scripts(pkg: &Json, pm: &str, prefix: Option<&str>, cwd: Option<PathBuf>, out: &mut Vec<RunConfig>) {
+fn push_scripts(
+    pkg: &Json,
+    dir: &Path,
+    pm: &str,
+    prefix: Option<&str>,
+    cwd: Option<PathBuf>,
+    out: &mut Vec<RunConfig>,
+) {
     let Some(scripts) = pkg.get("scripts").and_then(Json::as_object) else { return };
     let mut names: Vec<&String> = scripts.keys().collect();
     names.sort();
@@ -254,8 +262,12 @@ fn push_scripts(pkg: &Json, pm: &str, prefix: Option<&str>, cwd: Option<PathBuf>
         };
         let mut c = config(id, name, "npm", pm, &["run", script]).in_dir(cwd.clone()).debug("js-debug");
         c.extras.module = cwd.as_deref().map(ide_core::ipc_path::to_ipc);
-        if is_test_script(script) {
+        let runner = crate::test_runner::package_runner(pkg, dir, script);
+        // A script that runs a test framework to completion is a test configuration whatever its name.
+        let runs_tests = matches!(runner, Some((_, crate::test_runner::Found::Script { watch: false })));
+        if is_test_script(script) || runs_tests {
             c = c.test();
+            c.extras.test_runner = runner.map(|(id, _)| id.to_owned());
         }
         out.push(c);
     }
@@ -275,7 +287,7 @@ fn detect_node(root: &Path, out: &mut Vec<RunConfig>) {
         let pm = package_manager(&dir, &pkg);
         let rel = relative(root, &dir);
         let label = ide_core::ipc_path::to_ipc(&rel);
-        push_scripts(&pkg, pm, (dir != root).then_some(label.as_str()), (dir != root).then_some(rel), out);
+        push_scripts(&pkg, &dir, pm, (dir != root).then_some(label.as_str()), (dir != root).then_some(rel), out);
         for member_dir in ide_core::project_roots::node_workspace_members(&dir) {
             if !covered.insert(member_dir.clone()) {
                 continue;
@@ -288,7 +300,7 @@ fn detect_node(root: &Path, out: &mut Vec<RunConfig>) {
                 .map(str::to_owned)
                 .unwrap_or_else(|| ide_core::ipc_path::to_ipc(&rel));
             let name = if dir == root { name } else { format!("{label}:{name}") };
-            push_scripts(&member, pm, Some(&name), Some(rel), out);
+            push_scripts(&member, &member_dir, pm, Some(&name), Some(rel), out);
         }
     }
 }
@@ -305,8 +317,10 @@ fn detect_deno(root: &Path, out: &mut Vec<RunConfig>) {
     names.sort();
     for task in names {
         let mut c = config(format!("deno:{task}"), format!("deno task {task}"), "deno", "deno", &["task", task]);
-        if is_test_script(task) {
+        let runner = crate::test_runner::deno_task_runner(&tasks[task]);
+        if is_test_script(task) || runner.is_some_and(|(_, watch)| !watch) {
             c = c.test();
+            c.extras.test_runner = runner.map(|(id, _)| id.to_owned());
         }
         out.push(c);
     }
@@ -1518,6 +1532,15 @@ fn detect_mix(root: &Path, out: &mut Vec<RunConfig>) {
         out.push(config("mix:iex", "iex -S mix", "mix", "iex", &["-S", "mix"]));
     }
     out.push(config("mix:test", "mix test", "mix", "mix", &["test"]).test());
+}
+
+/// A Swift package (`Package.swift`): `swift build`, and `swift test` when it has tests (Swift Testing and XCTest).
+fn detect_swift(root: &Path, out: &mut Vec<RunConfig>) {
+    out.push(config("swift:build", "swift build", "swift", "swift", &["build"]));
+    let manifest = read(&root.join("Package.swift")).unwrap_or_default();
+    if manifest.contains(".testTarget(") || root.join("Tests").is_dir() {
+        out.push(config("swift:test", "swift test", "swift", "swift", &["test"]).test());
+    }
 }
 
 /// sbt (Scala): `sbt run` and `sbt test` on the build's root project, with the build's

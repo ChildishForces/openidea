@@ -546,6 +546,7 @@ run_stop                                     always             project_host bin
 run_system_env                               always             project_host bindings sync
 run_templates                                trusted            project_host bindings async
 run_test_reports                             trusted            project_host bindings async
+run_test_runners                             always             project_host bindings sync
 run_tomcat_artifacts                         trusted            project_host bindings async
 run_tomcat_build                             trusted            project_host bindings async
 run_tomcat_home                              trusted            project_host bindings async

@@ -8,6 +8,7 @@
  */
 import { goTargets } from "./goTargets";
 import { csharpTargets } from "./csharpTargets";
+import { swiftFilter, swiftTargets, withoutSwiftFilter } from "./swiftTargets";
 import { formatArgs } from "./configs";
 import type { RunConfig } from "@/platform/ipc";
 import { applicationConfig, jvmTestConfig } from "./application";
@@ -39,12 +40,14 @@ export interface RunTarget {
   /** Ruby: a `module` suite, which runs the tests of every class declared inside it. */
   rubyModule?: boolean;
   pest?: boolean;
+  /** Swift: an XCTest method (Swift Testing otherwise). */
+  xctest?: boolean;
 }
 
 /** Above this size we skip detection (generated / minified files). */
 export const MAX_SCAN = 400_000;
 
-type Lang = "rust" | "js" | "python" | "php" | "go" | "jvm" | "ruby" | "csharp" | null;
+type Lang = "rust" | "js" | "python" | "php" | "go" | "jvm" | "ruby" | "csharp" | "swift" | null;
 
 export function targetLanguage(relPath: string): Lang {
   if (/\.cs$/i.test(relPath)) return "csharp";
@@ -55,6 +58,7 @@ export function targetLanguage(relPath: string): Lang {
   if (/\.go$/.test(relPath)) return "go";
   if (/\.(java|kt|kts|scala|groovy)$/.test(relPath)) return "jvm";
   if (/\.rb$/.test(relPath)) return "ruby";
+  if (/\.swift$/.test(relPath)) return "swift";
   return null;
 }
 
@@ -85,14 +89,12 @@ function rustTargets(lines: string[], relPath: string): RunTarget[] {
   const mods: Array<{ name: string; depth: number }> = [];
   let depth = 0;
   let pendingTest = false;
-  let pendingCfgTest = false;
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]!;
     const line = codeOnly(raw);
     const trimmed = line.trim();
     if (/^#\[(?:[\w:]+::)?test\b|^#\[(?:tokio|async_std|actix_rt|rstest|test_case)(?:::\w+)?\b/.test(trimmed))
       pendingTest = true;
-    if (/^#\[cfg\(test\)\]/.test(trimmed)) pendingCfgTest = true;
     const fn = /^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)/.exec(trimmed);
     const mod = /^(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*\{/.exec(trimmed);
     if (fn) {
@@ -105,16 +107,13 @@ function rustTargets(lines: string[], relPath: string): RunTarget[] {
       )
         out.push({ line: i, kind: "main", name: "main", path: [] });
       pendingTest = false;
-      pendingCfgTest = false;
     } else if (mod) {
-      const modPath = [...prefix, ...mods.map((m) => m.name), mod[1]!];
-      if (pendingCfgTest || mod[1] === "tests") out.push({ line: i, kind: "suite", name: mod[1]!, path: modPath });
+      // Any inline module with tests runs as a suite (`mod add { #[test] … }` in `tests/*.rs` as much as `mod tests`).
+      out.push({ line: i, kind: "suite", name: mod[1]!, path: [...prefix, ...mods.map((m) => m.name), mod[1]!] });
       mods.push({ name: mod[1]!, depth });
       pendingTest = false;
-      pendingCfgTest = false;
     } else if (trimmed && !trimmed.startsWith("#[") && !trimmed.startsWith("//") && !trimmed.startsWith("///")) {
       pendingTest = false;
-      if (!/^#/.test(trimmed)) pendingCfgTest = false;
     }
     for (const ch of line) {
       if (ch === "{") depth++;
@@ -397,6 +396,8 @@ export function detectRunTargets(text: string, relPath: string, django = false):
     case "ruby":
       // RSpec files (`spec/`) are not Minitest.
       return /(^|\/)test_[^/]*\.rb$|_test\.rb$|(^|\/)tests?\//.test(relPath) ? rubyTargets(lines) : [];
+    case "swift":
+      return swiftTargets(text);
     default:
       return [];
   }
@@ -409,6 +410,15 @@ export function jsNamePattern(target: RunTarget): string {
   // `test.each` placeholders (%s, $name, ${…}) match anything.
   pattern = pattern.replace(/%[sdifjo#p]|\\\$\\\{[^}]*\\\}|\$\w+/g, ".*");
   return target.kind === "suite" ? `^${pattern}` : `^${pattern}$`;
+}
+
+/**
+ * The configuration runs Node's built-in runner, which filters with `--test-name-pattern` instead of `-t`:
+ * its detected runner says so, or (none detected) the file imports `node:test`.
+ */
+function usesNodeTest(config: RunConfig, content: string | undefined): boolean {
+  if (config.testRunner) return config.testRunner === "node-test";
+  return !!content && /\bfrom\s+["']node:test["']|\brequire\(\s*["']node:test["']\s*\)/.test(content);
 }
 
 function withLast(args: string[], f: (last: string) => string): string[] {
@@ -482,6 +492,13 @@ export function targetConfig(
     case "npm":
     case "bun":
     case "deno":
+      // `node --test` stops reading options at the first file, so the pattern goes before it.
+      if (usesNodeTest(file, content))
+        return named([
+          ...file.args.slice(0, -1),
+          `--test-name-pattern=${jsNamePattern(target)}`,
+          ...file.args.slice(-1),
+        ]);
       return named([...file.args, "-t", jsNamePattern(target)]);
     case "pytest":
     case "python":
@@ -538,6 +555,8 @@ export function targetConfig(
       const path = target.path.join("::");
       return named(target.kind === "suite" ? [...file.args, "--", `${path}::`] : [...file.args, "--", path, "--exact"]);
     }
+    case "swift":
+      return named([...withoutSwiftFilter(file.args), "--filter", swiftFilter(target)]);
     case "gradle":
       return named(
         withLast(file.args, (f) => (target.kind === "suite" ? f : `${f}.${target.path[target.path.length - 1]}`)),

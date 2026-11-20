@@ -9106,5 +9106,10 @@
   "{count} hover actions": "{count} 个悬停操作",
   "{description}; JVM options: {flags}": "{description}；JVM 选项：{flags}",
   "Sorting Options": "排序选项",
-  "Sort by Duration": "按持续时间排序"
+  "Sort by Duration": "按持续时间排序",
+  "{testRunner} (unknown)": "{testRunner}（未知）",
+  "Test runner": "测试运行器",
+  "Test files": "测试文件",
+  "Glob patterns relative to the package; separate with semicolon. Empty: the runner's defaults": "相对于包的 glob 模式，以分号分隔。留空则使用运行器的默认值",
+  "Test Results": "测试结果"
 }

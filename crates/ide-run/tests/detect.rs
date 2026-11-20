@@ -52,6 +52,35 @@ fn npm_scripts_with_lockfile_package_manager() {
 }
 
 #[test]
+fn npm_test_scripts_name_their_runner() {
+    let dir = project(&[
+        ("package.json", r#"{"workspaces":["packages/*"],"scripts":{"test":"npm run test --workspaces"}}"#),
+        ("packages/vitest/package.json", r#"{"scripts":{"test":"vitest run"}}"#),
+        ("packages/jest/package.json", r#"{"scripts":{"test":"jest","typecheck":"tsc -p ."}}"#),
+        ("packages/node/package.json", r#"{"scripts":{"test":"node --test"}}"#),
+        ("packages/bun/package.json", r#"{"scripts":{"test":"bun test"}}"#),
+        (
+            "packages/mocha/package.json",
+            r#"{"scripts":{"check":"cross-env CI=1 mocha","dev":"mocha --watch"},"devDependencies":{"mocha":"1"}}"#,
+        ),
+    ]);
+    let c = detect(dir.path());
+    let runner = |id: &str| find(&c, id).extras.test_runner.as_deref();
+    assert_eq!(runner("npm:test"), None);
+    assert!(find(&c, "npm:test").is_test);
+    assert_eq!(runner("npm:packages/vitest:test"), Some("vitest"));
+    assert_eq!(runner("npm:packages/jest:test"), Some("jest"));
+    assert_eq!(runner("npm:packages/node:test"), Some("node-test"));
+    assert_eq!(runner("npm:packages/bun:test"), Some("bun-test"));
+    // Named for what it does: running Mocha makes it a test configuration; watching does not.
+    assert!(find(&c, "npm:packages/mocha:check").is_test);
+    assert_eq!(runner("npm:packages/mocha:check"), Some("mocha"));
+    assert!(!find(&c, "npm:packages/mocha:dev").is_test);
+    assert_eq!(runner("npm:packages/mocha:dev"), None);
+    assert!(!find(&c, "npm:packages/jest:typecheck").is_test);
+}
+
+#[test]
 fn package_manager_selection() {
     for (lock, pm) in [("yarn.lock", "yarn"), ("bun.lockb", "bun"), ("bun.lock", "bun"), ("package-lock.json", "npm")] {
         let dir = project(&[("package.json", r#"{"scripts":{"start":"node ."}}"#), (lock, "")]);
@@ -610,6 +639,7 @@ fn deno_tasks() {
     assert_eq!(ids(&c), ["deno:dev", "deno:test"]);
     assert_eq!(cmdline(&c[0]), "deno task dev");
     assert!(c[1].is_test);
+    assert_eq!(c[1].extras.test_runner.as_deref(), Some("deno-test"));
 }
 
 #[test]
@@ -1272,6 +1302,19 @@ fn mix_projects() {
 
     let dir = project(&[("mix.exs", "defp deps do\n  [{:phoenix, \"~> 1.7\"}]\nend\n")]);
     assert_eq!(cmdline(&detect(dir.path())[0]), "iex -S mix phx.server");
+}
+
+#[test]
+fn swift_packages() {
+    let manifest =
+        "let package = Package(name: \"Lib\", targets: [.target(name: \"Lib\"), .testTarget(name: \"LibTests\")])";
+    let dir =
+        project(&[("Package.swift", manifest), ("tools/cli/Package.swift", "let package = Package(name: \"cli\")")]);
+    let c = detect(dir.path());
+    assert_eq!(ids(&c), ["swift:build", "swift:test", "swift:build:tools/cli"]);
+    assert_eq!(cmdline(find(&c, "swift:test")), "swift test");
+    assert!(find(&c, "swift:test").is_test);
+    assert_eq!(find(&c, "swift:build:tools/cli").cwd.as_deref(), Some(Path::new("tools/cli")));
 }
 
 #[test]

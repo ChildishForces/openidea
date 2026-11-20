@@ -191,6 +191,20 @@ describe("rerunFailedConfig", () => {
     expect(await rerunFailedConfig(cfg("zig", "zig", ["build", "test"]), [["tally", "subs"]])).toBeNull();
   });
 
+  it("swift: one --filter matching each failed test's identifier, in place of the run's", async () => {
+    const config = await rerunFailedConfig(cfg("swift", "swift", ["test", "--filter", "(^|\\.)AddTests(/|$)"]), [
+      ["MathLibTests", "AddTests", "addsPositiveNumbers()"],
+      ["MathLibTests", "LegacyTests", "testAdds"],
+    ]);
+    const filter = config!.args.at(-1)!;
+    expect(config!.args.slice(0, -1)).toEqual(["test", "--filter"]);
+    const matches = (id: string) => new RegExp(filter).test(id);
+    expect(matches("MathLibTests.AddTests/addsPositiveNumbers()/MathTests.swift:5:6")).toBe(true);
+    expect(matches("MathLibTests.LegacyTests/testAdds")).toBe(true);
+    expect(matches("MathLibTests.AddTests/handlesZero()/MathTests.swift:7:6")).toBe(false);
+    expect(matches("MathLibTests.LegacyTests/testAddsMore")).toBe(false);
+  });
+
   it("gradle and maven filters", async () => {
     expect((await rerunFailedConfig(cfg("gradle", "./gradlew", ["test"]), [["com.a.FooTest", "bar()"]]))!.args).toEqual(
       ["test", "--tests", "com.a.FooTest.bar"],

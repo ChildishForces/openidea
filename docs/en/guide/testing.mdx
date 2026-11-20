@@ -39,12 +39,14 @@ Running a single test creates a temporary run configuration based on the project
 | PHP                         | PHPUnit test classes and methods, Pest `test` / `it` / `describe`                             | PHPUnit, Pest                                                  |
 | Ruby                        | Minitest and Test::Unit classes, modules that hold them, `def test_*`                         | Minitest through `ruby` or `rake test`                         |
 | C#                          | xUnit `[Fact]` / `[Theory]`, NUnit `[Test]` / `[TestCase]`, MSTest `[TestMethod]`             | `dotnet test` (VSTest or Microsoft.Testing.Platform)           |
+| Swift                       | Swift Testing `@Test` functions and `@Suite` types, XCTest `test…` methods                    | `swift test`                                                   |
 
 RSpec has its own configuration type (**RSpec**) and a detected `rspec` configuration, but no gutter icons. Plugins can add test frameworks and report their results to the same test tree.
 
 <Note>
-  For .NET projects that use Microsoft.Testing.Platform, run **Install TRX reporting** from the .NET tool window so
-  results show in the test tree. See [Build tools](/en/guide/build-tools).
+  For .NET projects that use Microsoft.Testing.Platform with MSTest, NUnit or TUnit, run **Install TRX reporting** from
+  the .NET tool window so results show in the test tree. xUnit v3 projects report their results without it. See [Build
+  tools](/en/guide/build-tools).
 </Note>
 
 ## The test results view
@@ -58,6 +60,8 @@ A test run opens a tab in the **Run** tool window with the test tree next to the
 - For an assertion failure with expected and actual values, **Show Diff** opens them side by side.
 
 Detected test configurations show results in the tree automatically. For your own configuration, turn on **Modify options › Show results in the test runner**.
+
+A JavaScript or TypeScript test configuration also names its **Test runner**: Jest, Vitest, Mocha, Node.js test runner, Bun test or Deno test. OpenIDEA detects it from the command the script runs, following the scripts it calls, or else from the package's test framework dependency and its config file. Change it, or set the **Test files** the configuration covers, in the configuration's form.
 
 ## Rerun tests
 

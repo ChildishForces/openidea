@@ -10,10 +10,17 @@ export class DotnetReports {
   launch(config: RunConfig): RunConfig {
     this.mtp = config.params?.runner === "mtp" || config.params?.runner === "mtp-legacy";
     if (this.mtp) {
-      if (config.params?.trx === "false") return config;
+      // xUnit v3 writes TRX itself; other frameworks need the TrxReport extension.
+      const option =
+        config.params?.trx !== "false"
+          ? "--report-trx"
+          : config.params?.adapter === "xunit"
+            ? "--report-xunit-trx"
+            : null;
+      if (!option) return config;
       const args = [...config.args];
       if (config.params?.runner === "mtp-legacy" && !args.includes("--")) args.push("--");
-      if (!args.includes("--report-trx")) args.push("--report-trx");
+      if (!args.includes(option)) args.push(option);
       return { ...config, args };
     }
     const boundary = config.args.indexOf("--");

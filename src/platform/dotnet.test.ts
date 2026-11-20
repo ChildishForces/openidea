@@ -87,5 +87,22 @@ describe(".NET workspace formats and runners", () => {
     });
     expect(reporting.args).toContain("--report-trx");
     expect(reporting.args).not.toContain("--logger");
+    // Without the TrxReport extension, xUnit v3 writes TRX itself; other frameworks write none.
+    const without = (adapter: string) =>
+      new DotnetReports().launch({
+        id: "test",
+        name: "test",
+        kind: "dotnet-test",
+        ...line,
+        params: { ...p, adapter, trx: "false" },
+        cwd: null,
+        env: {},
+        isTest: true,
+        detected: true,
+        debugAdapter: null,
+      }).args;
+    expect(without("xunit")).toContain("--report-xunit-trx");
+    expect(without("xunit")).not.toContain("--report-trx");
+    expect(without("mstest")).toEqual(line.args);
   });
 });

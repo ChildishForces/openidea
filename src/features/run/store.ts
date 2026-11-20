@@ -40,6 +40,7 @@ import { confirmRerun, confirmTerminate } from "./dialogs";
 import {
   createTestParser,
   frameworkFor,
+  hasIdeReporter,
   TestResults,
   withTestReporting,
   type TestEvent,
@@ -47,6 +48,7 @@ import {
 } from "./testing";
 import { PluginTestOutput } from "./testing/plugin";
 import { GoTestOutput } from "./testing/go";
+import { SwiftTestOutput } from "./testing/swift";
 import { DotnetReports } from "./testing/dotnet";
 import { moveToReportedClasses } from "./testing/jvm";
 import { RubyTestOutput } from "./testing/ruby";
@@ -711,16 +713,18 @@ function newRuntime(config: RunConfig): SessionRuntime {
     if (tests && parser) tests.apply(parser.feed(line));
   };
   const framework = tests && parser ? frameworkFor(config) : null;
-  // PHPUnit `--teamcity` and Gradle's test init script report through service messages, Minitest through
-  // the IDE's own reporter (RSpec has none: its progress dots must show as they come).
+  // PHPUnit `--teamcity`, Gradle's test init script and the IDE's JS reporters report through service messages,
+  // Minitest through the IDE's own reporter (RSpec has none: its progress dots must show as they come).
   const stdout =
     framework === "go"
       ? new GoTestOutput(feed)
-      : framework === "phpunit" || framework === "jvm"
-        ? new TeamcityOutput(feed)
-        : framework === "ruby" && config.kind !== "rspec"
-          ? new RubyTestOutput(feed)
-          : null;
+      : framework === "swift"
+        ? new SwiftTestOutput(feed)
+        : framework === "phpunit" || framework === "jvm" || (framework === "js" && hasIdeReporter(config))
+          ? new TeamcityOutput(feed)
+          : framework === "ruby" && config.kind !== "rspec"
+            ? new RubyTestOutput(feed)
+            : null;
   const runtime: SessionRuntime = {
     stdout,
     tests,
@@ -1227,6 +1231,10 @@ async function jvmReports(session: RunSession): Promise<TestCaseReport[]> {
  * what the test printed before it.
  */
 export function applyTestReports(tests: TestResults, reports: readonly TestCaseReport[]) {
+  // JUnit 5 names a parameterized invocation by its display name alone (`[1] 2.0`): where the run reported the
+  // class's tests (Gradle's init script, under their method), it would repeat one beside its method.
+  const ran = (cls: string) => !!tests.get(cls)?.children.some((t) => tests.hasResult(t.path));
+  reports = reports.filter((r) => !(/^\[\d+\]/.test(r.name) && ran(r.className)));
   const reported = reports.filter((r) => tests.hasResult([r.className, r.name]));
   tests.apply(testReportEvents(reports).filter((e) => !("path" in e) || !tests.hasResult(e.path)));
   for (const r of reported) {

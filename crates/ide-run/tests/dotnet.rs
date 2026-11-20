@@ -60,6 +60,27 @@ fn project_properties_and_sdk_defaults() {
 }
 
 #[test]
+fn testing_platform_projects_are_test_projects() {
+    let test = |xml: &str| parse_project(xml).unwrap().test;
+    // xUnit v3, MSTest and TUnit run on Microsoft.Testing.Platform without VSTest's SDK.
+    assert!(test(
+        r#"<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup><ItemGroup><PackageReference Include="xunit.v3" Version="4.0.3" /></ItemGroup></Project>"#
+    ));
+    assert!(test(r#"<Project><ItemGroup><PackageReference Include="xunit.v3.mtp-v2" /></ItemGroup></Project>"#));
+    assert!(test(r#"<Project><ItemGroup><PackageReference Include="MSTest" /></ItemGroup></Project>"#));
+    assert!(test(r#"<Project><ItemGroup><PackageReference Include="TUnit" /></ItemGroup></Project>"#));
+    assert!(test(r#"<Project Sdk="MSTest.Sdk/3.8.0"><PropertyGroup /></Project>"#));
+    assert!(test(r#"<Project><PropertyGroup><IsTestProject>true</IsTestProject></PropertyGroup></Project>"#));
+    // A library for test authors isn't one, and the property wins.
+    assert!(!test(
+        r#"<Project><ItemGroup><PackageReference Include="xunit.v3.extensibility.core" /></ItemGroup></Project>"#
+    ));
+    assert!(!test(
+        r#"<Project><PropertyGroup><IsTestProject>false</IsTestProject></PropertyGroup><ItemGroup><PackageReference Include="xunit.v3" /></ItemGroup></Project>"#
+    ));
+}
+
+#[test]
 fn profiles_filter_and_preserve_launch_properties() {
     let p = parse_profiles(PROFILES);
     assert_eq!(p.keys().map(String::as_str).collect::<Vec<_>>(), ["http", "https"]);
@@ -137,4 +158,17 @@ fn solution_references_can_reach_projects_outside_the_open_directory() {
     let configs = detect(&temp.path().join("open"));
     assert_eq!(configs.len(), 1);
     assert!(configs[0].args[2].ends_with("external/App.csproj"));
+}
+
+#[test]
+fn a_monorepo_packages_folder_is_searched_but_nugets_is_not() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    write(root, "packages/csharp/xunit/App/App.csproj", CONSOLE);
+    write(root, "app/packages/Newtonsoft.Json.13.0.3/Newtonsoft.Json.13.0.3.nupkg", "");
+    write(root, "app/packages/Newtonsoft.Json.13.0.3/tools/Ignored.csproj", CONSOLE);
+    write(root, "legacy/packages/repositories.config", "<repositories />");
+    write(root, "legacy/packages/Ignored/Ignored.csproj", CONSOLE);
+    let projects: Vec<_> = detect(root).iter().filter_map(|c| c.extras.params.get("project").cloned()).collect();
+    assert_eq!(projects, ["packages/csharp/xunit/App/App.csproj"]);
 }

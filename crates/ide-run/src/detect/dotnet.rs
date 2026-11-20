@@ -20,10 +20,8 @@ pub(crate) fn detect(root: &Path, out: &mut Vec<RunConfig>) {
             let name = entry.file_name().to_string_lossy().into_owned();
             if entry.file_type().is_ok_and(|t| t.is_dir()) {
                 if !name.starts_with('.')
-                    && !matches!(
-                        name.as_str(),
-                        "bin" | "obj" | "node_modules" | "target" | "build" | "dist" | "vendor" | "packages"
-                    )
+                    && !matches!(name.as_str(), "bin" | "obj" | "node_modules" | "target" | "build" | "dist" | "vendor")
+                    && !(name == "packages" && is_nuget_folder(&path))
                 {
                     dirs.push(path);
                 }
@@ -74,6 +72,18 @@ pub(crate) fn detect(root: &Path, out: &mut Vec<RunConfig>) {
             out.push(detected(&rel, &name, "", params, true));
         }
     }
+}
+
+/// NuGet's `packages.config` folder (`packages/<Id>.<Version>/<id>.<version>.nupkg`), not a monorepo's `packages/`.
+fn is_nuget_folder(dir: &Path) -> bool {
+    dir.join("repositories.config").is_file()
+        || fs::read_dir(dir).into_iter().flatten().flatten().take(20).any(|package| {
+            fs::read_dir(package.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|f| f.path().extension().is_some_and(|e| e.eq_ignore_ascii_case("nupkg")))
+        })
 }
 
 fn detected(project: &str, name: &str, profile: &str, params: BTreeMap<String, String>, test: bool) -> RunConfig {

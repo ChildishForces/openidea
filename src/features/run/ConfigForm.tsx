@@ -49,6 +49,7 @@ import { EnvDialog } from "./EnvDialog";
 import { useBuildModel } from "@/platform/buildModel";
 import { COMPOUND, formParams, terminalApplies, withParams } from "./types";
 import { TomcatSettings } from "./TomcatSettings";
+import { configRunner, runnersFor, useTestRunners } from "./testRunners";
 import { toolWindowTitle } from "@/workbench/toolwindows/title";
 import styles from "./Run.module.css";
 
@@ -248,6 +249,7 @@ export function ConfigForm({ config, all, type, errors, template, onChange, modi
   const openByDefault = useWorkflowSettings((s) => s.run.showOnStart);
   const externalTools = useWorkflowSettings((s) => s.externalTools);
   const runTargets = useRunTargets();
+  const testRunners = useTestRunners(config.isTest);
   const toolWindows = useContributions((s) => s.toolWindows);
   const tx = useTx();
   const txTemplate = useTxTemplate();
@@ -267,6 +269,7 @@ export function ConfigForm({ config, all, type, errors, template, onChange, modi
   const [argsText, setArgsText] = useState<string | null>(null);
   const [envText, setEnvText] = useState<string | null>(null);
   const [envFilesText, setEnvFilesText] = useState<string | null>(null);
+  const [testFilesText, setTestFilesText] = useState<string | null>(null);
   const [envOpen, setEnvOpen] = useState(false);
   const [modifyOpen, setModifyOpen] = useState(false);
   const [lastRequest, setLastRequest] = useState(modifyRequest);
@@ -381,6 +384,13 @@ export function ConfigForm({ config, all, type, errors, template, onChange, modi
     setTasks(next);
   };
 
+  const kindRunners = runnersFor(testRunners, config.kind);
+  const runnerOptions: SelectOption[] = [
+    { value: "", label: "Not set" },
+    ...kindRunners.map((r) => ({ value: r.id, label: r.label })),
+  ];
+  if (config.testRunner && !kindRunners.some((r) => r.id === config.testRunner))
+    runnerOptions.push({ value: config.testRunner, label: txTemplate(`${config.testRunner} (unknown)`) });
   const adapterOptions: SelectOption[] = [
     { value: "", label: "None" },
     ...ADAPTERS.map((a) => ({ value: a.id, label: tx(a.label) })),
@@ -683,6 +693,39 @@ export function ConfigForm({ config, all, type, errors, template, onChange, modi
                   aria-label="Debug adapter"
                 />
               </Field>
+              {config.isTest && kindRunners.length > 0 && (
+                <>
+                  <Field label="Test runner">
+                    <Select
+                      value={config.testRunner ?? ""}
+                      options={runnerOptions}
+                      onChange={(v) => update({ testRunner: v || null })}
+                      aria-label="Test runner"
+                    />
+                  </Field>
+                  <Field
+                    label="Test files"
+                    hint="Glob patterns relative to the package; separate with semicolon. Empty: the runner's defaults"
+                  >
+                    <Input
+                      mono
+                      aria-label="Test files"
+                      value={testFilesText ?? (config.testFiles ?? []).join(";")}
+                      placeholder={configRunner(testRunners, config)?.testFiles.join(";")}
+                      onChange={(e) => {
+                        setTestFilesText(e.target.value);
+                        update({
+                          testFiles: e.target.value
+                            .split(";")
+                            .map((p) => p.trim())
+                            .filter(Boolean),
+                        });
+                      }}
+                      onBlur={() => setTestFilesText(null)}
+                    />
+                  </Field>
+                </>
+              )}
             </>
           )}
 

@@ -9,6 +9,7 @@ import { formatArgs, parseArgs } from "../configs";
 import { appendScriptArgs } from "../scriptArgs";
 import { djangoTestsOf } from "../djangoTypes";
 import { goTestParts, withoutGoSelection } from "../goArguments";
+import { withoutSwiftFilter } from "../swiftTargets";
 import { frameworkFor } from "./index";
 import { dotnetFilter } from "./dotnet";
 import { nodeStatus, type TestNode, type TestResults } from "./results";
@@ -119,6 +120,17 @@ function goArgs(base: string[], paths: string[][], file?: string): string[] | nu
     ...targets,
     ...withoutGoSelection(parts.program),
   ];
+}
+
+/**
+ * A Swift test's identifier as `swift test --filter` searches it: `Module.Suite/function()` (Swift
+ * Testing, whose identifier goes on with its source location) or `Module.Class/testMethod` (XCTest;
+ * on Linux its results name no module).
+ */
+function swiftPathFilter(path: string[]): string {
+  const [first, ...rest] = path.map(escapeRegExp);
+  if (path.at(-1)!.endsWith(")")) return `^${first}\\.${rest.join("/")}`;
+  return path.length > 2 ? `^${first}\\.${rest.join("/")}$` : `(^|\\.)${[first, ...rest].join("/")}$`;
 }
 
 function jvmArgs(config: RunConfig, paths: string[][]): string[] | null {
@@ -265,6 +277,11 @@ function builtinTestsConfig(config: RunConfig, paths: string[][], name: string):
     }
     case "jvm":
       args = jvmArgs(config, paths);
+      break;
+    case "swift":
+      args = paths.length
+        ? [...withoutSwiftFilter(config.args), "--filter", unique(paths.map(swiftPathFilter)).join("|")]
+        : null;
       break;
     default:
       args = null;

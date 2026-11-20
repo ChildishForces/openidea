@@ -4797,6 +4797,7 @@ dependencies = [
  "parking_lot",
  "portable-pty",
  "quick-xml 0.42.0",
+ "regex-lite",
  "serde",
  "serde_json",
  "specta",
